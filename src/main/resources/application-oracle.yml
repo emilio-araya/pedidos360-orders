@@ -1,0 +1,28 @@
+spring:
+  config:
+    activate:
+      on-profile: oracle
+  datasource:
+    url: ${ORDERS_DB_URL}
+    username: ${ORDERS_DB_USERNAME}
+    password: ${ORDERS_DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: ${ORDERS_DB_POOL_SIZE:10}
+      minimum-idle: ${ORDERS_DB_MIN_IDLE:2}
+      connection-timeout: 30000
+  jpa:
+    database-platform: org.hibernate.dialect.OracleDialect
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    placeholders:
+      version_type: NUMBER(19)
+
+app:
+  security:
+    issuer: ${ENTRA_ISSUER}
+    audience: ${ENTRA_API_AUDIENCE}
+  catalog:
+    base-url: ${CATALOG_SERVICE_URL}

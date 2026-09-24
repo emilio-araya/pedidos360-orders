@@ -1,0 +1,24 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:h2:mem:orders-${random.uuid};MODE=Oracle;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    placeholders:
+      version_type: BIGINT
+
+app:
+  security:
+    issuer: ${LOCAL_JWT_ISSUER:https://login.microsoftonline.com/pedidos360-local/v2.0}
+    audience: ${LOCAL_JWT_AUDIENCE:api://150f51db-4084-4979-b1a1-e6a6e7893a01}
+    hmac-secret: ${LOCAL_JWT_HMAC_SECRET:pedidos360-local-secret-change-me-32-bytes-minimum}
+  catalog:
+    base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}

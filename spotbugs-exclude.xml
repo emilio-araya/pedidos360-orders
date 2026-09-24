@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!-- Los beans Spring almacenan collaborators private final por diseño. -->
+    <Match>
+        <Or>
+            <Class name="com.pedidos360.orders.order.web.OrderController"/>
+            <Class name="com.pedidos360.orders.security.RestProblemSecurityHandler"/>
+        </Or>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+</FindBugsFilter>
