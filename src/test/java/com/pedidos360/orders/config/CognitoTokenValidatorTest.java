@@ -42,6 +42,43 @@ class CognitoTokenValidatorTest {
         assertThat(accessTokenValidator.validate(token).hasErrors()).isTrue();
     }
 
+    @Test
+    void acceptsClientIdWhenAudienceClaimIsAbsent() {
+        Jwt token = tokenWithoutAudienceClaim("59be26pgg5ginu2sutr8eetgjg", "access");
+
+        assertThat(audienceValidator.validate(token).hasErrors()).isFalse();
+        assertThat(accessTokenValidator.validate(token).hasErrors()).isFalse();
+    }
+
+    @Test
+    void rejectsWhenAudienceClaimIsAbsentAndClientDiffers() {
+        Jwt token = tokenWithoutAudienceClaim("another-client", "access");
+
+        assertThat(audienceValidator.validate(token).hasErrors()).isTrue();
+    }
+
+    @Test
+    void rejectsWhenAudienceAndClientAreBothAbsent() {
+        Jwt token = tokenWithoutAudienceClaim(null, "access");
+
+        assertThat(audienceValidator.validate(token).hasErrors()).isTrue();
+    }
+
+    private Jwt tokenWithoutAudienceClaim(String clientId, String tokenUse) {
+        Instant now = Instant.now();
+        Jwt.Builder builder = Jwt.withTokenValue("token")
+                .header("alg", "RS256")
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(300))
+                .subject("cognito-sub")
+                .claim("iss", "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UmEhPRYdI")
+                .claim("token_use", tokenUse);
+        if (clientId != null) {
+            builder.claim("client_id", clientId);
+        }
+        return builder.build();
+    }
+
     private Jwt token(List<String> audience, String clientId, String tokenUse) {
         Instant now = Instant.now();
         return Jwt.withTokenValue("token")

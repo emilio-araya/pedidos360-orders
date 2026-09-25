@@ -1,5 +1,6 @@
 package com.pedidos360.orders.config;
 
+import java.util.List;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
@@ -28,10 +29,17 @@ public final class CognitoAudienceValidator implements OAuth2TokenValidator<Jwt>
         if (clientId != null && !audience.equals(clientId)) {
             return OAuth2TokenValidatorResult.failure(INVALID_AUDIENCE);
         }
-        if (token.getAudience().contains(audience)) {
+
+        // Jwt.getAudience() devuelve null cuando el token no trae la claim `aud`,
+        // no una lista vacía. Un App Client publico sin servidor de recursos
+        // recibe un access token con `client_id` y `scope`, y sin `aud`, por lo
+        // que hay que tratar ambos casos.
+        List<String> audiences = token.getAudience();
+
+        if (audiences != null && audiences.contains(audience)) {
             return OAuth2TokenValidatorResult.success();
         }
-        if (token.getAudience().isEmpty() && audience.equals(clientId)) {
+        if ((audiences == null || audiences.isEmpty()) && audience.equals(clientId)) {
             return OAuth2TokenValidatorResult.success();
         }
         return OAuth2TokenValidatorResult.failure(INVALID_AUDIENCE);
