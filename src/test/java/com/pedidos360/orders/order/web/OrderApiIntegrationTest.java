@@ -93,6 +93,14 @@ class OrderApiIntegrationTest {
     }
 
     @Test
+    void cognitoNamespaceExposesTheOrderContract() throws Exception {
+        mockMvc.perform(get("/aws/api/orders")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_Cliente"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
     void createsWithCatalogSnapshotAndReplacesItemsWhileCreated() throws Exception {
         OrderResponse created = create(customer("customer-a"), Map.of(
                 "items", List.of(Map.of("productId", MOUSE_ID, "quantity", 2)),

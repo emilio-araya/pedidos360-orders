@@ -20,7 +20,7 @@ class LocalJwtDecoderTest {
     private static final String SECRET = "unit-test-local-hmac-secret-at-least-32-bytes";
     private static final String AUDIENCE = "pedidos360-api";
 
-    private final JwtDecoder decoder = new SecurityConfiguration().localJwtDecoder(
+    private final JwtDecoder decoder = new SecurityConfiguration().localEntraJwtDecoder(
             new AppSecurityProperties("local-issuer", AUDIENCE, SECRET)
     );
 
