@@ -33,7 +33,7 @@ public class HttpCatalogClient implements CatalogClient {
     public CatalogProduct getProduct(UUID productId) {
         try {
             CatalogProduct product = restClient.get()
-                    .uri("/api/catalog/products/{productId}", productId)
+                    .uri(bearerTokenProvider.currentApiPrefix() + "/catalog/products/{productId}", productId)
                     .headers(this::propagateBearer)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
@@ -60,7 +60,7 @@ public class HttpCatalogClient implements CatalogClient {
         StockReservation reservation = new StockReservation(orderId, items);
         try {
             restClient.post()
-                    .uri("/internal/catalog/stock/reservations")
+                    .uri(bearerTokenProvider.currentInternalPrefix() + "/catalog/stock/reservations")
                     .headers(this::propagateBearer)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
@@ -83,7 +83,7 @@ public class HttpCatalogClient implements CatalogClient {
     public void releaseStock(UUID orderId) {
         try {
             restClient.delete()
-                    .uri("/internal/catalog/stock/reservations/{orderId}", orderId)
+                    .uri(bearerTokenProvider.currentInternalPrefix() + "/catalog/stock/reservations/{orderId}", orderId)
                     .headers(this::propagateBearer)
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()

@@ -29,24 +29,25 @@ export ORDERS_DB_USERNAME='...'
 export ORDERS_DB_PASSWORD='...'
 export ENTRA_ISSUER='https://login.microsoftonline.com/<tenant>/v2.0'
 export ENTRA_API_AUDIENCE='150f51db-4084-4979-b1a1-e6a6e7893a01'
+export COGNITO_ISSUER='https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UmEhPRYdI'
+export COGNITO_API_AUDIENCE='59be26pgg5ginu2sutr8eetgjg'
+export COGNITO_JWK_SET_URI='https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UmEhPRYdI/.well-known/jwks.json'
 export CATALOG_SERVICE_URL='http://catalog:8082'
 mvn spring-boot:run
 ```
 
-Fuera de `local` el servicio exige issuer y audience de Entra; valida firma, `iss`, `aud`, `exp` y `nbf`.
-El claim `roles` se convierte en autoridades `ROLE_*` y la identidad usa `oid`, con fallback a `sub`.
+Fuera de `local` el servicio usa dos cadenas: Entra para `/api/**` y Cognito para `/aws/api/**`. Valida firma, issuer, audience/client ID, `exp`, `nbf` y `token_use=access` para Cognito. El claim `roles` de Entra o `cognito:groups` se convierte en autoridades `ROLE_*`; la identidad usa `oid` para Entra y `sub` para Cognito.
 
 ## API
 
-- `GET /api/orders`: el personal ve todos; un cliente, solo los suyos.
+- `/api/orders/**` y `/aws/api/orders/**`: el personal ve todos; un cliente, solo los suyos.
 - `GET /api/orders/{id}`: el personal ve cualquiera; un cliente, solo uno propio.
 - `POST /api/orders`: crea con snapshot de nombre/precio del catálogo.
 - `PUT /api/orders/{id}`: reemplaza datos únicamente mientras está `CREADO`.
 - `DELETE /api/orders/{id}`: cancela únicamente desde `CREADO`.
 - `PATCH /api/orders/{id}/status`: aplica la máquina de estados estricta.
 
-Al aceptar se llama a `POST /internal/catalog/stock/reservations`; al cancelar stock reservado se llama a
-`DELETE /internal/catalog/stock/reservations/{orderId}`. El Bearer entrante se propaga y `orderId` hace
+Al aceptar, Orders propaga el mismo Bearer al namespace del proveedor: `/internal/catalog/stock/reservations` para Entra y `/aws/api/internal/catalog/stock/reservations` para Cognito. Al cancelar stock reservado se usa la ruta interna correspondiente. `orderId` hace
 idempotente la reserva. Un lock pesimista evita dos reservas concurrentes para el mismo pedido.
 
 ## Pruebas y contenedor

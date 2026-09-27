@@ -24,5 +24,9 @@ app:
   security:
     issuer: ${ENTRA_ISSUER}
     audience: ${ENTRA_API_AUDIENCE}
+    cognito:
+      issuer: ${COGNITO_ISSUER:}
+      audience: ${COGNITO_API_AUDIENCE:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
   catalog:
     base-url: ${CATALOG_SERVICE_URL}

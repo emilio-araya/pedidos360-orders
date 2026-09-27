@@ -48,6 +48,7 @@ public class OrderService {
 
     @Transactional(readOnly = true)
     public List<OrderResponse> list(Authentication authentication) {
+        authorizationService.requireKnownRole(authentication);
         List<Order> orders;
         if (authorizationService.isStaff(authentication)) {
             orders = orderRepository.findAllDetailed();
@@ -67,6 +68,7 @@ public class OrderService {
 
     @Transactional
     public OrderResponse create(CreateOrderRequest request, Authentication authentication) {
+        authorizationService.requireKnownRole(authentication);
         String customerId = OrderPrincipal.from(authentication).customerId();
         List<OrderItem> items = snapshotItems(request.items());
         Order order = Order.create(customerId, request.notes());
