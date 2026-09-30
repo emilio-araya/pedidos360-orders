@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   verify:
-    name: Maven verify
+    name: Tests and coverage
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -25,5 +25,57 @@ jobs:
           cache: maven
       - name: Verify
         run: mvn --batch-mode --no-transfer-progress verify
+      - name: Resumen de pruebas y cobertura
+        run: |
+          python3 - <<'PYEOF'
+          import csv, glob, os, xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          pruebas = fallos = errores = omitidas = 0
+          for f in glob.glob('target/surefire-reports/TEST-*.xml'):
+              r = ET.parse(f).getroot()
+              pruebas += int(r.get('tests', 0))
+              fallos += int(r.get('failures', 0))
+              errores += int(r.get('errors', 0))
+              omitidas += int(r.get('skipped', 0))
+
+          csv_path = Path('target/site/jacoco/jacoco.csv')
+          lineas = ('n/d', 'n/d')
+          inst = ('n/d', 'n/d')
+          if csv_path.exists():
+              rows = list(csv.DictReader(csv_path.open()))
+              tot = lambda k: sum(int(r[k]) for r in rows)
+              lc, lm = tot('LINE_COVERED'), tot('LINE_MISSED')
+              ic, im = tot('INSTRUCTION_COVERED'), tot('INSTRUCTION_MISSED')
+              lineas = (lc, lc + lm)
+              inst = (ic, ic + im)
+
+          pct = lambda c, m: f'{100.0 * c / m:.1f}%' if m else 'n/d'
+          umbral = 70.0
+          ok_inst = inst[1] == 0 or 100.0 * inst[0] / inst[1] >= umbral
+
+          lineas_txt = f'{lineas[0]}/{lineas[1]} ({pct(*lineas)})'
+          inst_txt = f'{inst[0]}/{inst[1]} ({pct(*inst)})'
+          print(f'pruebas={pruebas} fallos={fallos} errores={errores} omitidas={omitidas}')
+          print(f'lineas={lineas_txt} instrucciones={inst_txt} umbral_ok={ok_inst}')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as fh:
+              fh.write('### Resumen de pruebas\n\n')
+              fh.write('| Metrica | Valor |\n|---|---|\n')
+              fh.write(f'| Pruebas ejecutadas | {pruebas} |\n')
+              fh.write(f'| Fallos | {fallos} |\n')
+              fh.write(f'| Errores | {errores} |\n')
+              fh.write(f'| Omitidas | {omitidas} |\n')
+              fh.write(f'| Cobertura de lineas | {lineas_txt} |\n')
+              fh.write(f'| Cobertura de instrucciones | {inst_txt} |\n')
+              fh.write(f'| Umbral exigido | {umbral:.0f}% |\n')
+          assert fallos == 0 and errores == 0, 'hay pruebas en rojo'
+          assert ok_inst, f'cobertura de instrucciones bajo el {umbral:.0f}%'
+          PYEOF
+      - name: Adjuntar reporte de cobertura
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco
+          retention-days: 30
       - name: Build container
         run: docker build --tag pedidos360-orders:ci .

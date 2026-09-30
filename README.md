@@ -58,8 +58,16 @@ idempotente la reserva. Un lock pesimista evita dos reservas concurrentes para e
 ## Pruebas y contenedor
 
 ```bash
-mvn test
+mvn verify
 docker build -t pedidos360-orders .
 ```
 
 Las pruebas usan H2 aislado y un mock de `CatalogClient`; no requieren Docker ni el catálogo.
+
+| Métrica | Valor |
+|---|---|
+| Pruebas | 37 |
+| Cobertura de líneas | 81.5% |
+| Cobertura de instrucciones | 80.3% |
+
+La CI ejecuta `mvn verify` en cada push y pull request, muestra el resumen en la página del workflow y adjunta el informe HTML de JaCoCo como artefacto. La cobertura de instrucciones es un umbral: el build falla si baja del 70%.
