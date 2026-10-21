@@ -68,8 +68,14 @@ Fuera de `local` el servicio usa dos cadenas: Entra para `/api/**` y Cognito par
 - `DELETE /api/orders/{id}`: cancela únicamente desde `CREADO`.
 - `PATCH /api/orders/{id}/status`: aplica la máquina de estados estricta.
 
-Al aceptar, Orders propaga el mismo Bearer al namespace del proveedor: `/internal/catalog/stock/reservations` para Entra y `/aws/api/internal/catalog/stock/reservations` para Cognito. Al cancelar stock reservado se usa la ruta interna correspondiente. `orderId` hace
+Al aceptar, Orders propaga el mismo Bearer al namespace del proveedor: `/internal/catalog/stock/reservations` para Entra y `/aws/api/internal/catalog/stock/reservations` para Cognito. `orderId` hace
 idempotente la reserva. Un lock pesimista evita dos reservas concurrentes para el mismo pedido.
+
+Al cancelar se libera siempre, aunque el pedido tenga `stockReserved=false`: si el catálogo confirmó la reserva y
+después falló el commit local, el flag quedó en `false` y esa reserva quedaría inmovilizada para siempre. El
+`release` del catálogo es idempotente (responde `204` cuando no hay reserva), así que la llamada incondicional
+cubre el caso huérfano. El coste asumido es que cancelar exige que el catálogo esté disponible; la reserva
+idempotente por `orderId` permite reintentar sin duplicar stock.
 
 ## Pruebas y contenedor
 
@@ -82,8 +88,8 @@ Las pruebas usan H2 aislado y un mock de `CatalogClient`; no requieren Docker ni
 
 | Métrica | Valor |
 |---|---|
-| Pruebas | 39 |
-| Cobertura de líneas | 82.7% |
+| Pruebas | 41 |
+| Cobertura de líneas | 82.6% |
 | Cobertura de instrucciones | 81.2% |
 
 La CI ejecuta `mvn verify` en cada push y pull request, muestra el resumen en la página del workflow y adjunta el informe HTML de JaCoCo como artefacto. La cobertura de instrucciones es un umbral: el build falla si baja del 70%.
