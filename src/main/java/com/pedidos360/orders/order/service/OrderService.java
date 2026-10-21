@@ -9,7 +9,9 @@ import com.pedidos360.orders.order.domain.OrderTransitionPolicy;
 import com.pedidos360.orders.order.dto.CreateOrderRequest;
 import com.pedidos360.orders.order.dto.OrderItemRequest;
 import com.pedidos360.orders.order.dto.OrderResponse;
+import com.pedidos360.orders.order.dto.PageResponse;
 import com.pedidos360.orders.order.dto.UpdateOrderRequest;
+import com.pedidos360.orders.order.exception.InvalidPageRequestException;
 import com.pedidos360.orders.order.exception.OrderBusinessException;
 import com.pedidos360.orders.order.exception.OrderNotFoundException;
 import com.pedidos360.orders.order.repository.OrderRepository;
@@ -22,12 +24,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class OrderService {
+
+    static final int MAX_PAGE_SIZE = 100;
 
     private final OrderRepository orderRepository;
     private final CatalogClient catalogClient;
@@ -47,16 +53,28 @@ public class OrderService {
     }
 
     @Transactional(readOnly = true)
-    public List<OrderResponse> list(Authentication authentication) {
+    public PageResponse<OrderResponse> list(int page, int size, Authentication authentication) {
         authorizationService.requireKnownRole(authentication);
-        List<Order> orders;
+        PageRequest pageRequest = pageRequest(page, size);
+        Page<Order> orders;
         if (authorizationService.isStaff(authentication)) {
-            orders = orderRepository.findAllDetailed();
+            orders = orderRepository.findAllByOrderByCreatedAtDesc(pageRequest);
         } else {
             String customerId = OrderPrincipal.from(authentication).customerId();
-            orders = orderRepository.findByCustomerIdOrderByCreatedAtDesc(customerId);
+            orders = orderRepository.findByCustomerIdOrderByCreatedAtDesc(customerId, pageRequest);
         }
-        return orders.stream().map(OrderResponse::from).toList();
+        return PageResponse.from(orders.map(OrderResponse::from));
+    }
+
+    private PageRequest pageRequest(int page, int size) {
+        if (page < 0) {
+            throw new InvalidPageRequestException("El número de página no puede ser negativo");
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw new InvalidPageRequestException(
+                    "El tamaño de página debe estar entre 1 y " + MAX_PAGE_SIZE);
+        }
+        return PageRequest.of(page, size);
     }
 
     @Transactional(readOnly = true)

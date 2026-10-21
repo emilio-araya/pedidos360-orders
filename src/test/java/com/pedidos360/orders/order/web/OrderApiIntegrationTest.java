@@ -97,7 +97,7 @@ class OrderApiIntegrationTest {
         mockMvc.perform(get("/aws/api/orders")
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_Cliente"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.content.length()").value(0));
     }
 
     @Test
@@ -143,7 +143,8 @@ class OrderApiIntegrationTest {
 
         mockMvc.perform(get("/api/orders").with(customer("customer-b")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.content.length()").value(0))
+                .andExpect(jsonPath("$.totalElements").value(0));
 
         mockMvc.perform(get("/api/orders/{id}", created.id()).with(operator()))
                 .andExpect(status().isOk())
@@ -151,7 +152,56 @@ class OrderApiIntegrationTest {
 
         mockMvc.perform(get("/api/orders").with(operator()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1));
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    void paginatesOrdersAndReportsTheTotal() throws Exception {
+        create(customer("customer-a"), orderWith(MOUSE_ID, 1));
+        create(customer("customer-a"), orderWith(MOUSE_ID, 2));
+        create(customer("customer-a"), orderWith(MOUSE_ID, 3));
+
+        mockMvc.perform(get("/api/orders")
+                        .param("page", "0")
+                        .param("size", "2")
+                        .with(operator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(2))
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[0].items.length()").value(1));
+
+        mockMvc.perform(get("/api/orders")
+                        .param("page", "1")
+                        .param("size", "2")
+                        .with(operator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.totalElements").value(3));
+    }
+
+    @Test
+    void rejectsPageRequestsOutsideTheAllowedRange() throws Exception {
+        mockMvc.perform(get("/api/orders").param("size", "101").with(operator()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/orders").param("size", "0").with(operator()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/orders").param("page", "-1").with(operator()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void appliesDefaultPaginationWhenNoParametersAreGiven() throws Exception {
+        create(customer("customer-a"), orderWith(MOUSE_ID, 1));
+
+        mockMvc.perform(get("/api/orders").with(operator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(20));
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.pedidos360.orders.catalog.exception.CatalogServiceException;
 import com.pedidos360.orders.catalog.exception.ProductNotFoundException;
 import com.pedidos360.orders.order.exception.ForbiddenOperationException;
 import com.pedidos360.orders.order.exception.InvalidOrderTransitionException;
+import com.pedidos360.orders.order.exception.InvalidPageRequestException;
 import com.pedidos360.orders.order.exception.OrderBusinessException;
 import com.pedidos360.orders.order.exception.OrderNotFoundException;
 import jakarta.persistence.LockTimeoutException;
@@ -77,6 +78,14 @@ public class ApiExceptionHandler {
                 "El servicio de catálogo no está disponible o rechazó la operación",
                 request
         );
+    }
+
+    @ExceptionHandler(InvalidPageRequestException.class)
+    ResponseEntity<ProblemDetail> invalidPageRequest(
+            InvalidPageRequestException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.BAD_REQUEST, exception.getMessage(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
