@@ -26,6 +26,16 @@ Variables locales:
 - `CATALOG_SERVICE_URL` (por defecto `http://localhost:8082`)
 - `CATALOG_CONNECT_TIMEOUT_MS` y `CATALOG_READ_TIMEOUT_MS` (ver *Timeouts hacia el catálogo*)
 
+## Paginación
+
+`GET /api/orders` pagina en la base, no en memoria. La consulta de pedidos **no** usa `@EntityGraph` sobre
+`items`: paginar un fetch de colección hace que Hibernate aplique el límite en memoria (`HHH90003004`) y
+traiga la tabla completa. Los items se cargan con `@BatchSize(25)`, así una página de 20 pedidos resuelve
+tres consultas: la página (`fetch first ? rows only`), el conteo y un `in (...)` para los items.
+
+La respuesta usa un envelope propio (`content`, `page`, `size`, `totalElements`, `totalPages`) en lugar de
+serializar `Page` de Spring, cuyo JSON es un detalle de implementación.
+
 ## Timeouts hacia el catálogo
 
 La llamada HTTP a `catalog` tiene timeout de conexión (2000 ms) y de lectura (10000 ms). Sin el de lectura,
@@ -62,6 +72,9 @@ Fuera de `local` el servicio usa dos cadenas: Entra para `/api/**` y Cognito par
 ## API
 
 - `/api/orders/**` y `/aws/api/orders/**`: el personal ve todos; un cliente, solo los suyos.
+- `GET /api/orders?page=0&size=20`: lista paginada. Devuelve `content`, `page`, `size`, `totalElements` y
+  `totalPages`; orden fijo por `createdAt` descendente. `page` debe ser `>= 0` y `size` debe estar entre `1` y
+  `100`: fuera de rango responde `400`, no recorta en silencio.
 - `GET /api/orders/{id}`: el personal ve cualquiera; un cliente, solo uno propio.
 - `POST /api/orders`: crea con snapshot de nombre/precio del catálogo.
 - `PUT /api/orders/{id}`: reemplaza datos únicamente mientras está `CREADO`.
@@ -88,8 +101,8 @@ Las pruebas usan H2 aislado y un mock de `CatalogClient`; no requieren Docker ni
 
 | Métrica | Valor |
 |---|---|
-| Pruebas | 41 |
-| Cobertura de líneas | 82.6% |
-| Cobertura de instrucciones | 81.2% |
+| Pruebas | 44 |
+| Cobertura de líneas | 83.1% |
+| Cobertura de instrucciones | 81.7% |
 
 La CI ejecuta `mvn verify` en cada push y pull request, muestra el resumen en la página del workflow y adjunta el informe HTML de JaCoCo como artefacto. La cobertura de instrucciones es un umbral: el build falla si baja del 70%.

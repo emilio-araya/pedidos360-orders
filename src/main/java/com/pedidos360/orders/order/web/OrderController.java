@@ -3,11 +3,11 @@ package com.pedidos360.orders.order.web;
 import com.pedidos360.orders.order.dto.ChangeOrderStatusRequest;
 import com.pedidos360.orders.order.dto.CreateOrderRequest;
 import com.pedidos360.orders.order.dto.OrderResponse;
+import com.pedidos360.orders.order.dto.PageResponse;
 import com.pedidos360.orders.order.dto.UpdateOrderRequest;
 import com.pedidos360.orders.order.service.OrderService;
 import jakarta.validation.Valid;
 import java.net.URI;
-import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -34,8 +35,12 @@ public class OrderController {
     }
 
     @GetMapping
-    public List<OrderResponse> list(Authentication authentication) {
-        return orderService.list(authentication);
+    public PageResponse<OrderResponse> list(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            Authentication authentication
+    ) {
+        return orderService.list(page, size, authentication);
     }
 
     @GetMapping("/{id}")

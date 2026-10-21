@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.hibernate.annotations.BatchSize;
 
 @Entity
 @Table(name = "orders")
@@ -58,6 +59,9 @@ public class Order {
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("id ASC")
+    // Una página de pedidos dispara una carga por lote en lugar de una consulta
+    // por pedido: sin esto, listar 20 pedidos hacía 20 selects de items.
+    @BatchSize(size = 25)
     private List<OrderItem> items = new ArrayList<>();
 
     protected Order() {
