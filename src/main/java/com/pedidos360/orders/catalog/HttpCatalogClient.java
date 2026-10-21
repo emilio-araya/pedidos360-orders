@@ -5,7 +5,7 @@ import com.pedidos360.orders.catalog.exception.CatalogServiceException;
 import com.pedidos360.orders.catalog.exception.ProductNotFoundException;
 import java.util.List;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -21,11 +21,10 @@ public class HttpCatalogClient implements CatalogClient {
     private final BearerTokenProvider bearerTokenProvider;
 
     public HttpCatalogClient(
-            RestClient.Builder builder,
-            BearerTokenProvider bearerTokenProvider,
-            @Value("${app.catalog.base-url}") String baseUrl
+            @Qualifier("catalogRestClient") RestClient restClient,
+            BearerTokenProvider bearerTokenProvider
     ) {
-        this.restClient = builder.baseUrl(baseUrl).build();
+        this.restClient = restClient;
         this.bearerTokenProvider = bearerTokenProvider;
     }
 

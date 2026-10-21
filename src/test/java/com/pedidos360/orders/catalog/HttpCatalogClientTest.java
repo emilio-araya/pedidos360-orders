@@ -38,12 +38,11 @@ class HttpCatalogClientTest {
 
     @BeforeEach
     void setUp() {
-        RestClient.Builder builder = RestClient.builder();
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://catalog.test");
         server = MockRestServiceServer.bindTo(builder).build();
         client = new HttpCatalogClient(
-                builder,
-                new BearerTokenProvider(),
-                "http://catalog.test"
+                builder.build(),
+                new BearerTokenProvider()
         );
         Jwt jwt = Jwt.withTokenValue(TOKEN)
                 .header("alg", "HS256")

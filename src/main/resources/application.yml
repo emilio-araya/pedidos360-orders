@@ -51,3 +51,5 @@ app:
     audience: ${ENTRA_API_AUDIENCE}
   catalog:
     base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
+    connect-timeout-ms: ${CATALOG_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${CATALOG_READ_TIMEOUT_MS:10000}
