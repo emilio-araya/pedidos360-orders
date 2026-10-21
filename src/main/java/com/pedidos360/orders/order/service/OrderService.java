@@ -97,7 +97,7 @@ public class OrderService {
         Order order = findForUpdate(id);
         authorizationService.requireDeleteCancellation(order, authentication);
         transitionPolicy.requireTransition(order.getStatus(), OrderStatus.CANCELADO);
-        releaseStockIfReserved(order);
+        releaseStock(order);
         order.markCancelled();
         return OrderResponse.from(order);
     }
@@ -116,7 +116,7 @@ public class OrderService {
             reserveStock(order);
             order.markAccepted();
         } else if (target == OrderStatus.CANCELADO) {
-            releaseStockIfReserved(order);
+            releaseStock(order);
             order.markCancelled();
         } else {
             order.changeStatus(target);
@@ -134,10 +134,13 @@ public class OrderService {
         catalogClient.reserveStock(UUID.fromString(order.getId()), stockItems);
     }
 
-    private void releaseStockIfReserved(Order order) {
-        if (order.isStockReserved()) {
-            catalogClient.releaseStock(UUID.fromString(order.getId()));
-        }
+    private void releaseStock(Order order) {
+        // La reserva remota puede existir aunque el pedido no la tenga registrada:
+        // si el catálogo confirmó y falló el commit local, el flag stockReserved
+        // quedó en false. Liberar siempre es idempotente (el catálogo responde 204
+        // cuando no hay reserva) y evita que ese stock quede inmovilizado para
+        // siempre. Coste asumido: cancelar exige que el catálogo esté disponible.
+        catalogClient.releaseStock(UUID.fromString(order.getId()));
     }
 
     private List<OrderItem> snapshotItems(List<OrderItemRequest> requests) {

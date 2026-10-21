@@ -196,14 +196,17 @@ class OrderApiIntegrationTest {
     }
 
     @Test
-    void releasesStockOnlyWhenReservedOrderIsCancelled() throws Exception {
+    void releasesTheReservationOnEveryCancellationBecauseItMayBeOrphaned() throws Exception {
+        // Cancelar un pedido sin reserva registrada también libera: el catálogo
+        // responde 204 si no hay nada que liberar, y así se cubre la reserva
+        // huérfana que dejó un commit local fallido.
         OrderResponse createdWithoutReservation = create(customer("customer-a"), orderWith(MOUSE_ID, 1));
 
         mockMvc.perform(delete("/api/orders/{id}", createdWithoutReservation.id())
                         .with(customer("customer-a")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELADO"));
-        verify(catalogClient, never()).releaseStock(any());
+        verify(catalogClient, times(1)).releaseStock(UUID.fromString(createdWithoutReservation.id()));
 
         OrderResponse reserved = create(customer("customer-a"), orderWith(MOUSE_ID, 3));
         mockMvc.perform(statusChange(reserved.id(), "ACEPTADO").with(operator()))
@@ -211,13 +214,44 @@ class OrderApiIntegrationTest {
 
         mockMvc.perform(statusChange(reserved.id(), "CANCELADO").with(customer("customer-a")))
                 .andExpect(status().isForbidden());
-        verify(catalogClient, never()).releaseStock(any());
+        verify(catalogClient, times(1)).releaseStock(UUID.fromString(createdWithoutReservation.id()));
 
         mockMvc.perform(statusChange(reserved.id(), "CANCELADO").with(operator()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELADO"))
                 .andExpect(jsonPath("$.stockReserved").value(false));
         verify(catalogClient, times(1)).releaseStock(UUID.fromString(reserved.id()));
+    }
+
+    @Test
+    void releasesOrphanReservationWhenCancellingAnOrderThatNeverRecordedIt() throws Exception {
+        // El catálogo confirma la reserva y después falla el commit local: el
+        // pedido queda en CREADO con stockReserved=false, pero el stock remoto
+        // sigue inmovilizado. Cancelar debe liberarlo igual.
+        OrderResponse created = create(customer("customer-a"), orderWith(MOUSE_ID, 1));
+
+        mockMvc.perform(delete("/api/orders/{id}", created.id())
+                        .with(customer("customer-a")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELADO"));
+
+        verify(catalogClient, times(1)).releaseStock(UUID.fromString(created.id()));
+    }
+
+    @Test
+    void keepsTheOrderCreatedWhenTheReservationCannotBeReleased() throws Exception {
+        // Consistencia antes que disponibilidad: si el catálogo no responde no se
+        // puede cancelar, porque el pedido quedaría cancelado con stock retenido.
+        OrderResponse created = create(customer("customer-a"), orderWith(MOUSE_ID, 1));
+        doThrow(new CatalogServiceException("catalog unavailable"))
+                .when(catalogClient).releaseStock(UUID.fromString(created.id()));
+
+        mockMvc.perform(delete("/api/orders/{id}", created.id()).with(customer("customer-a")))
+                .andExpect(status().isBadGateway());
+
+        mockMvc.perform(get("/api/orders/{id}", created.id()).with(customer("customer-a")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CREADO"));
     }
 
     @Test
