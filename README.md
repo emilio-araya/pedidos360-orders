@@ -36,6 +36,14 @@ tres consultas: la página (`fetch first ? rows only`), el conteo y un `in (...)
 La respuesta usa un envelope propio (`content`, `page`, `size`, `totalElements`, `totalPages`) en lugar de
 serializar `Page` de Spring, cuyo JSON es un detalle de implementación.
 
+## Trazabilidad
+
+Cada request lleva un `X-Request-Id`. Si el cliente lo envía y cumple `^[A-Za-z0-9._-]{1,64}$` se respeta; si
+falta o no cumple se genera un UUID. El id se devuelve en la respuesta, se imprime en cada línea de log y se
+propaga al catálogo en cada llamada HTTP, así una operación se sigue de punta a punta entre BFF, orders y
+catalog. Un valor con saltos de línea se descarta a propósito: permitirlo habilitaría inyectar entradas falsas
+en el log.
+
 ## Timeouts hacia el catálogo
 
 La llamada HTTP a `catalog` tiene timeout de conexión (2000 ms) y de lectura (10000 ms). Sin el de lectura,
@@ -101,8 +109,8 @@ Las pruebas usan H2 aislado y un mock de `CatalogClient`; no requieren Docker ni
 
 | Métrica | Valor |
 |---|---|
-| Pruebas | 44 |
-| Cobertura de líneas | 83.1% |
-| Cobertura de instrucciones | 81.7% |
+| Pruebas | 49 |
+| Cobertura de líneas | 83.5% |
+| Cobertura de instrucciones | 82.1% |
 
 La CI ejecuta `mvn verify` en cada push y pull request, muestra el resumen en la página del workflow y adjunta el informe HTML de JaCoCo como artefacto. La cobertura de instrucciones es un umbral: el build falla si baja del 70%.

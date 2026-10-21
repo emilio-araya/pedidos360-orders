@@ -40,6 +40,9 @@ public class CatalogClientConfiguration {
         return RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory)
+                // Propaga el id de correlación de la request en curso para que
+                // el catálogo registre el mismo identificador.
+                .requestInterceptor(new RequestIdInterceptor())
                 .build();
     }
 
