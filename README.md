@@ -24,6 +24,22 @@ Variables locales:
 - `LOCAL_JWT_AUDIENCE` (predeterminado `api://150f51db-4084-4979-b1a1-e6a6e7893a01`)
 - `LOCAL_JWT_HMAC_SECRET` (debe coincidir con BFF y catálogo)
 - `CATALOG_SERVICE_URL` (por defecto `http://localhost:8082`)
+- `CATALOG_CONNECT_TIMEOUT_MS` y `CATALOG_READ_TIMEOUT_MS` (ver *Timeouts hacia el catálogo*)
+
+## Timeouts hacia el catálogo
+
+La llamada HTTP a `catalog` tiene timeout de conexión (2000 ms) y de lectura (10000 ms). Sin el de lectura,
+una respuesta que nunca llega retiene el hilo del request de forma indefinida: unas pocas llamadas colgadas
+agotan el pool de Tomcat y el servicio deja de responder, incluido `/actuator/health`.
+
+| Propiedad | Variable | Predeterminado |
+|---|---|---|
+| `app.catalog.connect-timeout-ms` | `CATALOG_CONNECT_TIMEOUT_MS` | `2000` |
+| `app.catalog.read-timeout-ms` | `CATALOG_READ_TIMEOUT_MS` | `10000` |
+
+Un valor no positivo falla al arrancar: en el cliente JDK, `0` significa "sin timeout" y reactivaría el
+cuelgue que esta configuración evita. Los valores deben quedar por debajo del timeout del balanceador y del
+`deployment circuit breaker` para que la falla se detecte antes de que el tráfico se acumule.
 
 ## Oracle
 
@@ -66,8 +82,8 @@ Las pruebas usan H2 aislado y un mock de `CatalogClient`; no requieren Docker ni
 
 | Métrica | Valor |
 |---|---|
-| Pruebas | 37 |
-| Cobertura de líneas | 81.5% |
-| Cobertura de instrucciones | 80.3% |
+| Pruebas | 39 |
+| Cobertura de líneas | 82.7% |
+| Cobertura de instrucciones | 81.2% |
 
 La CI ejecuta `mvn verify` en cada push y pull request, muestra el resumen en la página del workflow y adjunta el informe HTML de JaCoCo como artefacto. La cobertura de instrucciones es un umbral: el build falla si baja del 70%.
