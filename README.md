@@ -17,6 +17,10 @@ El perfil `local` usa una base H2 en memoria aislada, aplica Flyway y valida el 
 (al menos 32 bytes) se configura únicamente con `LOCAL_JWT_HMAC_SECRET`. Ese mecanismo no se activa en
 Oracle/cloud.
 
+Los eventos de pedido se publican en RabbitMQ: `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME`,
+`RABBITMQ_PASSWORD` y `RABBITMQ_VHOST` (por defecto `localhost:5672`, `guest`, vhost `/`). Sin broker la API responde,
+`/actuator/health` informa `DOWN` y los eventos esperan en la outbox. `mvn test` no necesita broker.
+
 Variables locales:
 
 - `LOCAL_JWT_HMAC_SECRET`
@@ -88,15 +92,47 @@ Fuera de `local` el servicio usa dos cadenas: Entra para `/api/**` y Cognito par
 - `PUT /api/orders/{id}`: reemplaza datos únicamente mientras está `CREADO`.
 - `DELETE /api/orders/{id}`: cancela únicamente desde `CREADO`.
 - `PATCH /api/orders/{id}/status`: aplica la máquina de estados estricta.
+- En los pedidos de invitado, `OrderResponse` incluye `customerEmail`; en los pedidos con inicio de sesión se omite.
 
-Al aceptar, Orders propaga el mismo Bearer al namespace del proveedor: `/internal/catalog/stock/reservations` para Entra y `/aws/api/internal/catalog/stock/reservations` para Cognito. `orderId` hace
-idempotente la reserva. Un lock pesimista evita dos reservas concurrentes para el mismo pedido.
+### Compra como invitado
 
-Al cancelar se libera siempre, aunque el pedido tenga `stockReserved=false`: si el catálogo confirmó la reserva y
-después falló el commit local, el flag quedó en `false` y esa reserva quedaría inmovilizada para siempre. El
-`release` del catálogo es idempotente (responde `204` cuando no hay reserva), así que la llamada incondicional
-cubre el caso huérfano. El coste asumido es que cancelar exige que el catálogo esté disponible; la reserva
-idempotente por `orderId` permite reintentar sin duplicar stock.
+El cliente compra sin iniciar sesión y deja solo su correo. Estas rutas existen únicamente bajo `/api` (no bajo
+`/aws/api`) y no requieren `Authorization`:
+
+- `POST /api/guest-orders`: cuerpo `{"email", "items": [{"productId", "quantity"}], "notes"?}`. El correo es
+  obligatorio, con formato válido y hasta 254 caracteres; se guarda recortado y en minúsculas. Los ítems y precios
+  siguen las mismas reglas que `POST /api/orders`. Responde `201` con `GuestOrderResponse`, que incluye
+  `trackingToken` solo en esta respuesta.
+- `GET /api/guest-orders/{token}`: devuelve `orderNumber`, `status`, `items`, `total`, `notes`,
+  `cancellationReason`, `maskedEmail` (por ejemplo `l***@duocuc.cl`), `createdAt` y `updatedAt`. Nunca expone el
+  `id` interno, `customerId`, `stockReserved` ni el correo completo.
+- `POST /api/guest-orders/{token}/cancel`: cancela solo desde `CREADO` y escribe `pedido.cancelado` en la outbox;
+  en otro estado responde `409`.
+
+El token son 256 bits de `SecureRandom` en 64 caracteres hexadecimales en minúscula. La base guarda solo su
+SHA-256 (`orders.guest_token_hash`, único); el token en claro no se guarda, no se publica en RabbitMQ y no se
+registra en los logs. Un token con formato inválido o desconocido responde el mismo `404`. El dueño de un pedido
+de invitado es `guest:<id del pedido>`, que nunca coincide con un `oid` o `sub`, por lo que ningún cliente con
+sesión puede verlo; el personal lo ve en su listado.
+
+Para armar el pedido, orders consulta el producto en el catálogo (`GET /api/catalog/products/{id}`, ruta pública)
+sin `Authorization` cuando la request no trae JWT; si lo trae, lo reenvía como siempre.
+
+### Reserva de stock asíncrona
+
+Aceptar y cancelar no llaman al catálogo: escriben el cambio de estado y un evento en `outbox_event`, en la misma
+transacción. `OutboxPublisher` publica los eventos pendientes en RabbitMQ con confirmación del broker, y el catálogo
+responde con `stock.reservado` o `stock.reserva-fallida`.
+
+- Al aceptar, el pedido queda `ACEPTADO` con `stockReserved=false` hasta que llega la confirmación.
+- `ACEPTADO → EN_PREPARACION` responde `409` mientras el stock no esté confirmado.
+- Si el catálogo rechaza la reserva, el pedido pasa a `CANCELADO` y `cancellationReason` guarda el motivo.
+- Cancelar siempre emite `pedido.cancelado`. Si llega una confirmación para un pedido ya cancelado, se emite
+  `pedido.reserva-huerfana` una sola vez para que el catálogo libere.
+- Aceptar y cancelar ya no dependen de que el catálogo esté disponible.
+
+El contrato de eventos, los reintentos con backoff y la DLQ están en
+`pedidos360-infra/docs/MENSAJERIA_RABBITMQ.md`.
 
 ## Pruebas y contenedor
 

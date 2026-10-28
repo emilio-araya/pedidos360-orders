@@ -47,6 +47,10 @@ public class SecurityConfiguration {
                 .securityMatcher("/api/**")
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Guest checkout: no login; the tracking token in the path is the credential.
+                        .requestMatchers(HttpMethod.POST, "/api/guest-orders", "/api/guest-orders/*/cancel")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/guest-orders/*").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(oauth2 -> oauth2

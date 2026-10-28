@@ -10,11 +10,14 @@ public record OrderResponse(
         String id,
         String orderNumber,
         String customerId,
+        // Email of a guest order; null (omitted) for orders placed with login.
+        String customerEmail,
         OrderStatus status,
         List<OrderItemResponse> items,
         BigDecimal total,
         String notes,
         boolean stockReserved,
+        String cancellationReason,
         Instant createdAt,
         Instant updatedAt
 ) {
@@ -37,11 +40,13 @@ public record OrderResponse(
                 order.getId(),
                 order.getOrderNumber(),
                 order.getCustomerId(),
+                order.getCustomerEmail(),
                 order.getStatus(),
                 items,
                 order.getTotal(),
                 order.getNotes(),
                 order.isStockReserved(),
+                order.getCancellationReason(),
                 order.getCreatedAt(),
                 order.getUpdatedAt()
         );

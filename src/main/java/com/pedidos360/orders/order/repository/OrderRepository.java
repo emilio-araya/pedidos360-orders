@@ -27,4 +27,12 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from Order o where o.id = :id")
     Optional<Order> findByIdForUpdate(@Param("id") String id);
+
+    @EntityGraph(attributePaths = "items")
+    @Query("select o from Order o where o.guestTokenHash = :hash")
+    Optional<Order> findDetailedByGuestTokenHash(@Param("hash") String hash);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from Order o where o.guestTokenHash = :hash")
+    Optional<Order> findByGuestTokenHashForUpdate(@Param("hash") String hash);
 }
