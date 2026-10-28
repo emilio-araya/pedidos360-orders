@@ -1,7 +1,6 @@
 package com.pedidos360.orders.order.service;
 
 import com.pedidos360.orders.catalog.CatalogClient;
-import com.pedidos360.orders.catalog.CatalogClient.StockItem;
 import com.pedidos360.orders.order.domain.Order;
 import com.pedidos360.orders.order.domain.OrderItem;
 import com.pedidos360.orders.order.domain.OrderStatus;
@@ -15,6 +14,9 @@ import com.pedidos360.orders.order.exception.InvalidPageRequestException;
 import com.pedidos360.orders.order.exception.OrderBusinessException;
 import com.pedidos360.orders.order.exception.OrderNotFoundException;
 import com.pedidos360.orders.order.repository.OrderRepository;
+import com.pedidos360.orders.outbox.OrderEventPayload;
+import com.pedidos360.orders.outbox.OutboxWriter;
+import com.pedidos360.orders.outbox.RabbitConfiguration;
 import com.pedidos360.orders.security.OrderAuthorizationService;
 import com.pedidos360.orders.security.OrderPrincipal;
 import java.math.BigDecimal;
@@ -27,6 +29,8 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,21 +39,26 @@ public class OrderService {
 
     static final int MAX_PAGE_SIZE = 100;
 
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+
     private final OrderRepository orderRepository;
     private final CatalogClient catalogClient;
     private final OrderTransitionPolicy transitionPolicy;
     private final OrderAuthorizationService authorizationService;
+    private final OutboxWriter outboxWriter;
 
     public OrderService(
             OrderRepository orderRepository,
             CatalogClient catalogClient,
             OrderTransitionPolicy transitionPolicy,
-            OrderAuthorizationService authorizationService
+            OrderAuthorizationService authorizationService,
+            OutboxWriter outboxWriter
     ) {
         this.orderRepository = orderRepository;
         this.catalogClient = catalogClient;
         this.transitionPolicy = transitionPolicy;
         this.authorizationService = authorizationService;
+        this.outboxWriter = outboxWriter;
     }
 
     @Transactional(readOnly = true)
@@ -115,8 +124,8 @@ public class OrderService {
         Order order = findForUpdate(id);
         authorizationService.requireDeleteCancellation(order, authentication);
         transitionPolicy.requireTransition(order.getStatus(), OrderStatus.CANCELADO);
-        releaseStock(order);
         order.markCancelled();
+        recordCancelledEvent(order);
         return OrderResponse.from(order);
     }
 
@@ -131,34 +140,84 @@ public class OrderService {
         transitionPolicy.requireTransition(order.getStatus(), target);
 
         if (target == OrderStatus.ACEPTADO) {
-            reserveStock(order);
             order.markAccepted();
+            recordAcceptedEvent(order);
         } else if (target == OrderStatus.CANCELADO) {
-            releaseStock(order);
             order.markCancelled();
+            recordCancelledEvent(order);
         } else {
+            if (target == OrderStatus.EN_PREPARACION && !order.isStockReserved()) {
+                // Con la reserva síncrona, aceptar ya implicaba stock reservado.
+                // Ahora la confirmación llega después y no se prepara sin ella.
+                throw new OrderBusinessException("El stock del pedido todavía no está confirmado");
+            }
             order.changeStatus(target);
         }
         return OrderResponse.from(order);
     }
 
-    private void reserveStock(Order order) {
-        if (order.isStockReserved()) {
-            throw new OrderBusinessException("El stock del pedido ya está reservado");
+    /**
+     * Aplica la confirmación de reserva que publica el catálogo. Es idempotente:
+     * una reentrega no cambia nada. Si el pedido se canceló antes de que llegara
+     * la confirmación, la reserva quedó huérfana y se pide liberarla una vez.
+     */
+    @Transactional
+    public void applyStockReserved(UUID orderId) {
+        Order order = findForUpdate(orderId.toString());
+        if (order.getStatus() == OrderStatus.CANCELADO) {
+            log.warn("Reserva confirmada para el pedido cancelado {}: se pide liberarla", orderId);
+            outboxWriter.writeIfAbsent(
+                    orderId,
+                    RabbitConfiguration.ORPHAN_ROUTING_KEY,
+                    new OrderEventPayload.Cancelled(orderId));
+            return;
         }
-        List<StockItem> stockItems = order.getItems().stream()
-                .map(item -> new StockItem(UUID.fromString(item.getProductId()), item.getQuantity()))
-                .toList();
-        catalogClient.reserveStock(UUID.fromString(order.getId()), stockItems);
+        if (!order.isStockReserved()) {
+            order.markStockReserved();
+        }
     }
 
-    private void releaseStock(Order order) {
-        // La reserva remota puede existir aunque el pedido no la tenga registrada:
-        // si el catálogo confirmó y falló el commit local, el flag stockReserved
-        // quedó en false. Liberar siempre es idempotente (el catálogo responde 204
-        // cuando no hay reserva) y evita que ese stock quede inmovilizado para
-        // siempre. Coste asumido: cancelar exige que el catálogo esté disponible.
-        catalogClient.releaseStock(UUID.fromString(order.getId()));
+    /**
+     * Aplica el rechazo de reserva que publica el catálogo: cancela el pedido como
+     * compensación y guarda el motivo. Sólo afecta a un pedido aceptado sin stock
+     * confirmado; en cualquier otro estado el rechazo llega tarde y se ignora.
+     */
+    @Transactional
+    public void applyStockRejected(UUID orderId, String errorCode, String reason) {
+        Order order = findForUpdate(orderId.toString());
+        if (order.getStatus() != OrderStatus.ACEPTADO || order.isStockReserved()) {
+            log.warn("Rechazo de reserva ignorado para el pedido {} en estado {} (stockReserved={}): {}",
+                    orderId, order.getStatus(), order.isStockReserved(), errorCode);
+            return;
+        }
+        order.cancelForRejectedStock(reason != null ? reason : errorCode);
+        recordCancelledEvent(order);
+    }
+
+    private void recordAcceptedEvent(Order order) {
+        UUID orderId = UUID.fromString(order.getId());
+        List<OrderEventPayload.Item> items = order.getItems().stream()
+                .map(item -> new OrderEventPayload.Item(
+                        UUID.fromString(item.getProductId()),
+                        item.getQuantity()))
+                .toList();
+        outboxWriter.write(
+                orderId,
+                RabbitConfiguration.ACCEPTED_ROUTING_KEY,
+                new OrderEventPayload.Accepted(orderId, items));
+    }
+
+    /**
+     * Cancelar siempre pide liberar, aunque la reserva no esté confirmada: el
+     * resultado puede seguir en vuelo, y liberar en el catálogo es idempotente
+     * (no hace nada si no hay reserva).
+     */
+    private void recordCancelledEvent(Order order) {
+        UUID orderId = UUID.fromString(order.getId());
+        outboxWriter.write(
+                orderId,
+                RabbitConfiguration.CANCELLED_ROUTING_KEY,
+                new OrderEventPayload.Cancelled(orderId));
     }
 
     private List<OrderItem> snapshotItems(List<OrderItemRequest> requests) {

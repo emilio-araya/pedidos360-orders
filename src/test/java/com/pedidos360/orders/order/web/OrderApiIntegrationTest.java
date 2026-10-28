@@ -9,6 +9,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -27,6 +29,9 @@ import com.pedidos360.orders.catalog.exception.CatalogServiceException;
 import com.pedidos360.orders.order.domain.OrderStatus;
 import com.pedidos360.orders.order.dto.OrderResponse;
 import com.pedidos360.orders.order.repository.OrderRepository;
+import com.pedidos360.orders.order.service.OrderService;
+import com.pedidos360.orders.outbox.OutboxEvent;
+import com.pedidos360.orders.outbox.OutboxEventRepository;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -61,11 +66,18 @@ class OrderApiIntegrationTest {
     @Autowired
     private OrderRepository orderRepository;
 
+    @Autowired
+    private OutboxEventRepository outboxRepository;
+
+    @Autowired
+    private OrderService orderService;
+
     @MockitoBean
     private CatalogClient catalogClient;
 
     @BeforeEach
     void setUp() {
+        outboxRepository.deleteAll();
         orderRepository.deleteAll();
         reset(catalogClient);
         when(catalogClient.getProduct(MOUSE_ID)).thenReturn(new CatalogClient.CatalogProduct(
@@ -222,16 +234,27 @@ class OrderApiIntegrationTest {
 
         mockMvc.perform(statusChange(created.id(), "ACEPTADO").with(customer("customer-a")))
                 .andExpect(status().isForbidden());
-        verify(catalogClient, never()).reserveStock(any(), any());
+        assertThat(eventTypes(created.id())).isEmpty();
 
         mockMvc.perform(statusChange(created.id(), "ACEPTADO").with(operator()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACEPTADO"))
-                .andExpect(jsonPath("$.stockReserved").value(true));
+                .andExpect(jsonPath("$.stockReserved").value(false));
 
         mockMvc.perform(statusChange(created.id(), "DESPACHADO").with(operator()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("Transición no permitida: ACEPTADO -> DESPACHADO"));
+
+        // Sin la confirmación del catálogo no se prepara: es el invariante que el
+        // diseño síncrono garantizaba al aceptar.
+        mockMvc.perform(statusChange(created.id(), "EN_PREPARACION").with(operator()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("El stock del pedido todavía no está confirmado"));
+
+        orderService.applyStockReserved(UUID.fromString(created.id()));
+        mockMvc.perform(get("/api/orders/{id}", created.id()).with(customer("customer-a")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stockReserved").value(true));
 
         mockMvc.perform(statusChange(created.id(), "EN_PREPARACION").with(operator()))
                 .andExpect(status().isOk());
@@ -242,86 +265,77 @@ class OrderApiIntegrationTest {
         mockMvc.perform(statusChange(created.id(), "CANCELADO").with(operator()))
                 .andExpect(status().isConflict());
 
-        verify(catalogClient, times(1)).reserveStock(eq(UUID.fromString(created.id())), any());
+        assertThat(eventTypes(created.id())).containsExactly("pedido.aceptado");
     }
 
     @Test
-    void releasesTheReservationOnEveryCancellationBecauseItMayBeOrphaned() throws Exception {
-        // Cancelar un pedido sin reserva registrada también libera: el catálogo
-        // responde 204 si no hay nada que liberar, y así se cubre la reserva
-        // huérfana que dejó un commit local fallido.
+    void requestsTheReleaseOnEveryCancellation() throws Exception {
+        // Cancelar siempre emite pedido.cancelado, aunque el stock no esté
+        // confirmado: el catálogo libera de forma idempotente y así no queda
+        // ninguna reserva inmovilizada.
         OrderResponse createdWithoutReservation = create(customer("customer-a"), orderWith(MOUSE_ID, 1));
 
         mockMvc.perform(delete("/api/orders/{id}", createdWithoutReservation.id())
                         .with(customer("customer-a")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELADO"));
-        verify(catalogClient, times(1)).releaseStock(UUID.fromString(createdWithoutReservation.id()));
+        assertThat(eventTypes(createdWithoutReservation.id())).containsExactly("pedido.cancelado");
 
         OrderResponse reserved = create(customer("customer-a"), orderWith(MOUSE_ID, 3));
         mockMvc.perform(statusChange(reserved.id(), "ACEPTADO").with(operator()))
                 .andExpect(status().isOk());
+        orderService.applyStockReserved(UUID.fromString(reserved.id()));
 
         mockMvc.perform(statusChange(reserved.id(), "CANCELADO").with(customer("customer-a")))
                 .andExpect(status().isForbidden());
-        verify(catalogClient, times(1)).releaseStock(UUID.fromString(createdWithoutReservation.id()));
+        assertThat(eventTypes(reserved.id())).containsExactly("pedido.aceptado");
 
         mockMvc.perform(statusChange(reserved.id(), "CANCELADO").with(operator()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELADO"))
                 .andExpect(jsonPath("$.stockReserved").value(false));
-        verify(catalogClient, times(1)).releaseStock(UUID.fromString(reserved.id()));
+        assertThat(eventTypes(reserved.id())).containsExactly("pedido.aceptado", "pedido.cancelado");
     }
 
     @Test
-    void releasesOrphanReservationWhenCancellingAnOrderThatNeverRecordedIt() throws Exception {
-        // El catálogo confirma la reserva y después falla el commit local: el
-        // pedido queda en CREADO con stockReserved=false, pero el stock remoto
-        // sigue inmovilizado. Cancelar debe liberarlo igual.
-        OrderResponse created = create(customer("customer-a"), orderWith(MOUSE_ID, 1));
+    void acceptsAndCancelsWithoutDependingOnTheCatalog() throws Exception {
+        // Antes, aceptar y cancelar devolvían 502 si el catálogo no respondía.
+        // Ahora sólo escriben la outbox en la transacción local.
+        OrderResponse toAccept = create(customer("customer-a"), orderWith(MOUSE_ID, 2));
+        OrderResponse toCancel = create(customer("customer-a"), orderWith(MOUSE_ID, 1));
+        clearInvocations(catalogClient);
 
-        mockMvc.perform(delete("/api/orders/{id}", created.id())
-                        .with(customer("customer-a")))
+        mockMvc.perform(statusChange(toAccept.id(), "ACEPTADO").with(operator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACEPTADO"));
+        mockMvc.perform(delete("/api/orders/{id}", toCancel.id()).with(customer("customer-a")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELADO"));
 
-        verify(catalogClient, times(1)).releaseStock(UUID.fromString(created.id()));
+        verifyNoInteractions(catalogClient);
     }
 
     @Test
-    void keepsTheOrderCreatedWhenTheReservationCannotBeReleased() throws Exception {
-        // Consistencia antes que disponibilidad: si el catálogo no responde no se
-        // puede cancelar, porque el pedido quedaría cancelado con stock retenido.
-        OrderResponse created = create(customer("customer-a"), orderWith(MOUSE_ID, 1));
-        doThrow(new CatalogServiceException("catalog unavailable"))
-                .when(catalogClient).releaseStock(UUID.fromString(created.id()));
-
-        mockMvc.perform(delete("/api/orders/{id}", created.id()).with(customer("customer-a")))
-                .andExpect(status().isBadGateway());
-
-        mockMvc.perform(get("/api/orders/{id}", created.id()).with(customer("customer-a")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CREADO"));
-    }
-
-    @Test
-    void failedReservationRollsBackStateAndCanBeRetried() throws Exception {
+    void exposesTheCancellationReasonWhenTheCatalogRejectsTheReservation() throws Exception {
         OrderResponse created = create(customer("customer-a"), orderWith(MOUSE_ID, 2));
-        doThrow(new CatalogServiceException("catalog unavailable"))
-                .when(catalogClient).reserveStock(eq(UUID.fromString(created.id())), any());
-
         mockMvc.perform(statusChange(created.id(), "ACEPTADO").with(operator()))
-                .andExpect(status().isBadGateway());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancellationReason").doesNotExist());
+
+        orderService.applyStockRejected(UUID.fromString(created.id()), "INSUFFICIENT_STOCK", "Stock insuficiente");
 
         mockMvc.perform(get("/api/orders/{id}", created.id()).with(customer("customer-a")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CREADO"))
-                .andExpect(jsonPath("$.stockReserved").value(false));
+                .andExpect(jsonPath("$.status").value("CANCELADO"))
+                .andExpect(jsonPath("$.cancellationReason").value("Stock insuficiente"));
+    }
 
-        doNothing().when(catalogClient).reserveStock(eq(UUID.fromString(created.id())), any());
-        mockMvc.perform(statusChange(created.id(), "ACEPTADO").with(operator()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("ACEPTADO"));
+    private List<String> eventTypes(String orderId) {
+        return outboxRepository.findAll().stream()
+                .filter(event -> event.getAggregateId().equals(orderId))
+                .sorted((left, right) -> left.getCreatedAt().compareTo(right.getCreatedAt()))
+                .map(OutboxEvent::getEventType)
+                .toList();
     }
 
     @Test

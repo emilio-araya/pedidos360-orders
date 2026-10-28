@@ -17,6 +17,10 @@ El perfil `local` usa una base H2 en memoria aislada, aplica Flyway y valida el 
 (al menos 32 bytes) se configura únicamente con `LOCAL_JWT_HMAC_SECRET`. Ese mecanismo no se activa en
 Oracle/cloud.
 
+Los eventos de pedido se publican en RabbitMQ: `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME`,
+`RABBITMQ_PASSWORD` y `RABBITMQ_VHOST` (por defecto `localhost:5672`, `guest`, vhost `/`). Sin broker la API responde,
+`/actuator/health` informa `DOWN` y los eventos esperan en la outbox. `mvn test` no necesita broker.
+
 Variables locales:
 
 - `LOCAL_JWT_HMAC_SECRET`
@@ -89,14 +93,21 @@ Fuera de `local` el servicio usa dos cadenas: Entra para `/api/**` y Cognito par
 - `DELETE /api/orders/{id}`: cancela únicamente desde `CREADO`.
 - `PATCH /api/orders/{id}/status`: aplica la máquina de estados estricta.
 
-Al aceptar, Orders propaga el mismo Bearer al namespace del proveedor: `/internal/catalog/stock/reservations` para Entra y `/aws/api/internal/catalog/stock/reservations` para Cognito. `orderId` hace
-idempotente la reserva. Un lock pesimista evita dos reservas concurrentes para el mismo pedido.
+### Reserva de stock asíncrona
 
-Al cancelar se libera siempre, aunque el pedido tenga `stockReserved=false`: si el catálogo confirmó la reserva y
-después falló el commit local, el flag quedó en `false` y esa reserva quedaría inmovilizada para siempre. El
-`release` del catálogo es idempotente (responde `204` cuando no hay reserva), así que la llamada incondicional
-cubre el caso huérfano. El coste asumido es que cancelar exige que el catálogo esté disponible; la reserva
-idempotente por `orderId` permite reintentar sin duplicar stock.
+Aceptar y cancelar no llaman al catálogo: escriben el cambio de estado y un evento en `outbox_event`, en la misma
+transacción. `OutboxPublisher` publica los eventos pendientes en RabbitMQ con confirmación del broker, y el catálogo
+responde con `stock.reservado` o `stock.reserva-fallida`.
+
+- Al aceptar, el pedido queda `ACEPTADO` con `stockReserved=false` hasta que llega la confirmación.
+- `ACEPTADO → EN_PREPARACION` responde `409` mientras el stock no esté confirmado.
+- Si el catálogo rechaza la reserva, el pedido pasa a `CANCELADO` y `cancellationReason` guarda el motivo.
+- Cancelar siempre emite `pedido.cancelado`. Si llega una confirmación para un pedido ya cancelado, se emite
+  `pedido.reserva-huerfana` una sola vez para que el catálogo libere.
+- Aceptar y cancelar ya no dependen de que el catálogo esté disponible.
+
+El contrato de eventos, los reintentos con backoff y la DLQ están en
+`pedidos360-infra/docs/MENSAJERIA_RABBITMQ.md`.
 
 ## Pruebas y contenedor
 

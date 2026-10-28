@@ -2,6 +2,7 @@ package com.pedidos360.orders.order.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -14,6 +15,8 @@ import com.pedidos360.orders.order.dto.CreateOrderRequest;
 import com.pedidos360.orders.order.dto.OrderItemRequest;
 import com.pedidos360.orders.order.dto.OrderResponse;
 import com.pedidos360.orders.order.repository.OrderRepository;
+import com.pedidos360.orders.outbox.OutboxEventRepository;
+import com.pedidos360.orders.outbox.OutboxWriter;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
@@ -33,6 +36,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @SpringBootTest
 @ActiveProfiles("local")
@@ -46,15 +50,22 @@ class OrderAcceptanceConcurrencyTest {
     @Autowired
     private OrderRepository orderRepository;
 
+    @Autowired
+    private OutboxEventRepository outboxRepository;
+
     @MockitoBean
     private CatalogClient catalogClient;
+
+    @MockitoSpyBean
+    private OutboxWriter outboxWriter;
 
     private ExecutorService executor;
 
     @BeforeEach
     void setUp() {
+        outboxRepository.deleteAll();
         orderRepository.deleteAll();
-        reset(catalogClient);
+        reset(catalogClient, outboxWriter);
         executor = Executors.newFixedThreadPool(2);
         when(catalogClient.getProduct(PRODUCT_ID)).thenReturn(new CatalogClient.CatalogProduct(
                 PRODUCT_ID,
@@ -71,7 +82,7 @@ class OrderAcceptanceConcurrencyTest {
     }
 
     @Test
-    void concurrentAcceptanceCallsReservationOnlyOnce() throws Exception {
+    void concurrentAcceptanceRecordsTheReservationEventOnlyOnce() throws Exception {
         Authentication operator = operator();
         CreateOrderRequest request = new CreateOrderRequest(
                 List.of(new OrderItemRequest(PRODUCT_ID, 2)),
@@ -79,27 +90,32 @@ class OrderAcceptanceConcurrencyTest {
         );
         OrderResponse created = orderService.create(request, operator);
 
-        CountDownLatch reservationEntered = new CountDownLatch(1);
-        CountDownLatch allowReservationToFinish = new CountDownLatch(1);
+        // El primer hilo se detiene dentro de la transacción, con el pedido bloqueado,
+        // justo antes de escribir el evento. El segundo llega mientras tanto.
+        CountDownLatch eventWriteEntered = new CountDownLatch(1);
+        CountDownLatch allowEventWriteToFinish = new CountDownLatch(1);
         doAnswer(invocation -> {
-            reservationEntered.countDown();
-            if (!allowReservationToFinish.await(5, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Timeout esperando para finalizar la reserva");
+            eventWriteEntered.countDown();
+            if (!allowEventWriteToFinish.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timeout esperando para escribir el evento");
             }
-            return null;
-        }).when(catalogClient).reserveStock(any(), any());
+            return invocation.callRealMethod();
+        }).when(outboxWriter).write(any(), eq("pedido.aceptado"), any());
 
         Future<String> first = executor.submit(() -> accept(created.id(), operator));
-        assertThat(reservationEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(eventWriteEntered.await(5, TimeUnit.SECONDS)).isTrue();
         Future<String> second = executor.submit(() -> accept(created.id(), operator));
-        allowReservationToFinish.countDown();
+        allowEventWriteToFinish.countDown();
 
         assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
                 .containsExactlyInAnyOrder("ACEPTADO", "CONFLICTO");
         OrderResponse persisted = orderService.get(created.id(), operator);
         assertThat(persisted.status()).isEqualTo(OrderStatus.ACEPTADO);
-        assertThat(persisted.stockReserved()).isTrue();
-        verify(catalogClient, times(1)).reserveStock(any(), any());
+        assertThat(persisted.stockReserved()).isFalse();
+        assertThat(outboxRepository.findAll())
+                .singleElement()
+                .satisfies(event -> assertThat(event.getEventType()).isEqualTo("pedido.aceptado"));
+        verify(outboxWriter, times(1)).write(any(), eq("pedido.aceptado"), any());
     }
 
     private String accept(String id, Authentication authentication) {

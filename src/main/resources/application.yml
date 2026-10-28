@@ -14,6 +14,22 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    connection-timeout: 5s
+    # El publicador espera la confirmación del broker antes de dar el evento por publicado.
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    listener:
+      simple:
+        # Ack manual: ResilientConsumer confirma sólo después de procesar.
+        acknowledge-mode: manual
+        prefetch: 10
+        default-requeue-rejected: false
   jackson:
     default-property-inclusion: non_null
     serialization:
@@ -53,6 +69,11 @@ app:
     base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
     connect-timeout-ms: ${CATALOG_CONNECT_TIMEOUT_MS:2000}
     read-timeout-ms: ${CATALOG_READ_TIMEOUT_MS:10000}
+  outbox:
+    # Los tests lo desactivan en src/test/resources/application.properties.
+    publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
+    publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:2000}
+    confirm-timeout-ms: ${OUTBOX_CONFIRM_TIMEOUT_MS:5000}
 
 logging:
   pattern:

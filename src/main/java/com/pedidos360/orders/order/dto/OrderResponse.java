@@ -15,6 +15,7 @@ public record OrderResponse(
         BigDecimal total,
         String notes,
         boolean stockReserved,
+        String cancellationReason,
         Instant createdAt,
         Instant updatedAt
 ) {
@@ -42,6 +43,7 @@ public record OrderResponse(
                 order.getTotal(),
                 order.getNotes(),
                 order.isStockReserved(),
+                order.getCancellationReason(),
                 order.getCreatedAt(),
                 order.getUpdatedAt()
         );

@@ -47,6 +47,9 @@ public class Order {
     @Column(name = "stock_reserved", nullable = false, precision = 1, scale = 0)
     private boolean stockReserved;
 
+    @Column(name = "cancellation_reason", length = 500)
+    private String cancellationReason;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -91,10 +94,33 @@ public class Order {
         touch();
     }
 
+    /**
+     * Aceptar ya no implica stock reservado: la reserva es asíncrona y se
+     * confirma con {@link #markStockReserved()} cuando responde el catálogo.
+     */
     public void markAccepted() {
         status = OrderStatus.ACEPTADO;
+        touch();
+    }
+
+    public void markStockReserved() {
         stockReserved = true;
         touch();
+    }
+
+    /** Compensación: el catálogo rechazó la reserva de un pedido aceptado. */
+    public void cancelForRejectedStock(String reason) {
+        status = OrderStatus.CANCELADO;
+        stockReserved = false;
+        cancellationReason = truncate(reason, 500);
+        touch();
+    }
+
+    private static String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 
     public void markCancelled() {
@@ -156,6 +182,10 @@ public class Order {
 
     public boolean isStockReserved() {
         return stockReserved;
+    }
+
+    public String getCancellationReason() {
+        return cancellationReason;
     }
 
     public Instant getCreatedAt() {
