@@ -23,6 +23,8 @@ import org.hibernate.annotations.BatchSize;
 @Table(name = "orders")
 public class Order {
 
+    public static final String GUEST_CUSTOMER_PREFIX = "guest:";
+
     @Id
     @Column(name = "id", nullable = false, length = 36)
     private String id;
@@ -50,6 +52,13 @@ public class Order {
     @Column(name = "cancellation_reason", length = 500)
     private String cancellationReason;
 
+    @Column(name = "customer_email", length = 254)
+    private String customerEmail;
+
+    /** SHA-256 (hex) of the guest tracking token; the raw token is never stored. */
+    @Column(name = "guest_token_hash", unique = true, length = 64)
+    private String guestTokenHash;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -76,6 +85,26 @@ public class Order {
         order.id = UUID.randomUUID().toString();
         order.orderNumber = generateOrderNumber();
         order.customerId = customerId;
+        order.status = OrderStatus.CREADO;
+        order.notes = normalizeNotes(notes);
+        order.createdAt = now;
+        order.updatedAt = now;
+        return order;
+    }
+
+    /**
+     * Creates an order bought without login. The owner is a sentinel derived from
+     * the order id: it can never match a JWT oid/sub, so no customer can reach it
+     * through the authenticated API.
+     */
+    public static Order createGuest(String customerEmail, String guestTokenHash, String notes) {
+        Order order = new Order();
+        Instant now = Instant.now();
+        order.id = UUID.randomUUID().toString();
+        order.orderNumber = generateOrderNumber();
+        order.customerId = GUEST_CUSTOMER_PREFIX + order.id;
+        order.customerEmail = customerEmail;
+        order.guestTokenHash = guestTokenHash;
         order.status = OrderStatus.CREADO;
         order.notes = normalizeNotes(notes);
         order.createdAt = now;
@@ -186,6 +215,14 @@ public class Order {
 
     public String getCancellationReason() {
         return cancellationReason;
+    }
+
+    public String getCustomerEmail() {
+        return customerEmail;
+    }
+
+    public String getGuestTokenHash() {
+        return guestTokenHash;
     }
 
     public Instant getCreatedAt() {

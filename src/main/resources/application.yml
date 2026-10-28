@@ -76,6 +76,10 @@ app:
     confirm-timeout-ms: ${OUTBOX_CONFIRM_TIMEOUT_MS:5000}
 
 logging:
+  level:
+    # Logs the URI of the first request at WARN; guest routes carry the secret
+    # tracking token in the path, and it must never reach the logs.
+    org.springframework.web.servlet.handler.HandlerMappingIntrospector: ERROR
   pattern:
     # %X{requestId} imprime el id de correlación; "-" cuando no hay request en curso.
     level: "%5p [%X{requestId:--}]"

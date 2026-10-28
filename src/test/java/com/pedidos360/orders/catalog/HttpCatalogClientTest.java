@@ -71,4 +71,27 @@ class HttpCatalogClientTest {
         assertThat(product.name()).isEqualTo("Mouse");
         server.verify();
     }
+
+    @Test
+    void readsPublicProductsWithoutAuthorizationWhenNoJwtIsPresent() {
+        // Guest checkout runs without a JWT; the catalog product read is public.
+        SecurityContextHolder.clearContext();
+        server.expect(requestTo("http://catalog.test/api/catalog/products/" + PRODUCT_ID))
+                .andExpect(method(GET))
+                .andExpect(request -> assertThat(request.getHeaders().containsKey(AUTHORIZATION)).isFalse())
+                .andRespond(withSuccess("""
+                        {
+                          "id": "%s",
+                          "name": "Mouse",
+                          "price": 19990.00,
+                          "stock": 10,
+                          "active": true
+                        }
+                        """.formatted(PRODUCT_ID), MediaType.APPLICATION_JSON));
+
+        CatalogClient.CatalogProduct product = client.getProduct(PRODUCT_ID);
+
+        assertThat(product.name()).isEqualTo("Mouse");
+        server.verify();
+    }
 }
