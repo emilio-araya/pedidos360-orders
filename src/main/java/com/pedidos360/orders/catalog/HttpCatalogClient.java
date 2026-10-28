@@ -53,6 +53,6 @@ public class HttpCatalogClient implements CatalogClient {
     }
 
     private void propagateBearer(HttpHeaders headers) {
-        headers.setBearerAuth(bearerTokenProvider.currentToken());
+        bearerTokenProvider.currentToken().ifPresent(headers::setBearerAuth);
     }
 }

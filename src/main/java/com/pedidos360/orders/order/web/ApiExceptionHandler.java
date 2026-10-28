@@ -4,6 +4,7 @@ import com.pedidos360.orders.catalog.exception.CatalogConflictException;
 import com.pedidos360.orders.catalog.exception.CatalogServiceException;
 import com.pedidos360.orders.catalog.exception.ProductNotFoundException;
 import com.pedidos360.orders.order.exception.ForbiddenOperationException;
+import com.pedidos360.orders.order.exception.GuestOrderNotFoundException;
 import com.pedidos360.orders.order.exception.InvalidOrderTransitionException;
 import com.pedidos360.orders.order.exception.InvalidPageRequestException;
 import com.pedidos360.orders.order.exception.OrderBusinessException;
@@ -15,6 +16,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -32,9 +34,18 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 public class ApiExceptionHandler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ApiExceptionHandler.class);
+    private static final Pattern GUEST_TOKEN_IN_PATH = Pattern.compile("(/guest-orders/)(?!link-requests)[^/]+");
 
     @ExceptionHandler(OrderNotFoundException.class)
     ResponseEntity<ProblemDetail> notFound(OrderNotFoundException exception, HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(GuestOrderNotFoundException.class)
+    ResponseEntity<ProblemDetail> guestOrderNotFound(
+            GuestOrderNotFoundException exception,
+            HttpServletRequest request
+    ) {
         return problem(HttpStatus.NOT_FOUND, exception.getMessage(), request);
     }
 
@@ -144,12 +155,17 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> unexpected(Exception exception, HttpServletRequest request) {
-        LOGGER.error("Error no controlado en {}", request.getRequestURI(), exception);
+        LOGGER.error("Error no controlado en {}", loggableUri(request), exception);
         return problem(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 "Ocurrió un error interno",
                 request
         );
+    }
+
+    /** Guest routes carry the secret tracking token in the path; it must never reach the logs. */
+    private String loggableUri(HttpServletRequest request) {
+        return GUEST_TOKEN_IN_PATH.matcher(request.getRequestURI()).replaceFirst("$1***");
     }
 
     private FieldViolation toViolation(FieldError error) {
