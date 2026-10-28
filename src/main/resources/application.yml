@@ -30,18 +30,6 @@ spring:
         acknowledge-mode: manual
         prefetch: 10
         default-requeue-rejected: false
-  jackson:
-    default-property-inclusion: non_null
-    serialization:
-      write-dates-as-timestamps: false
-
-server:
-  port: ${SERVER_PORT:8081}
-  shutdown: graceful
-  error:
-    include-message: never
-    include-stacktrace: never
-
   mail:
     # Mailpit en local y Amazon SES en AWS: mismas variables, distinto host.
     host: ${MAIL_HOST:}
@@ -54,6 +42,18 @@ server:
       mail.smtp.connectiontimeout: 5000
       mail.smtp.timeout: 5000
       mail.smtp.writetimeout: 5000
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
 
 management:
   health:
