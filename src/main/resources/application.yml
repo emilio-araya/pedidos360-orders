@@ -30,6 +30,19 @@ spring:
         acknowledge-mode: manual
         prefetch: 10
         default-requeue-rejected: false
+  mail:
+    # Mailpit en local y Amazon SES en AWS: mismas variables, distinto host.
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_AUTH:false}
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS:false}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
   jackson:
     default-property-inclusion: non_null
     serialization:
@@ -43,6 +56,10 @@ server:
     include-stacktrace: never
 
 management:
+  health:
+    # Sin SMTP configurado no hay que marcar el servicio como caído.
+    mail:
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -62,6 +79,13 @@ info:
     version: 1.0.0
 
 app:
+  guest:
+    mail:
+      from: ${MAIL_FROM:no-reply@pedidos360.local}
+      # Base del enlace de seguimiento que viaja en el correo.
+      frontend-public-url: ${FRONTEND_PUBLIC_URL:http://localhost:4200}
+      # 0 ejecuta el envío en el hilo de la petición: sólo para tests.
+      executor-threads: ${GUEST_MAIL_EXECUTOR_THREADS:2}
   security:
     issuer: ${ENTRA_ISSUER}
     audience: ${ENTRA_API_AUDIENCE}
