@@ -33,6 +33,12 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     Optional<Order> findDetailedByGuestTokenHash(@Param("hash") String hash);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from Order o where o.orderNumber = :orderNumber and o.customerEmail = :email")
+    Optional<Order> findGuestByOrderNumberAndEmailForUpdate(
+            @Param("orderNumber") String orderNumber,
+            @Param("email") String email);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from Order o where o.guestTokenHash = :hash")
     Optional<Order> findByGuestTokenHashForUpdate(@Param("hash") String hash);
 }

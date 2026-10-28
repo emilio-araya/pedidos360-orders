@@ -221,6 +221,12 @@ public class Order {
         return customerEmail;
     }
 
+    /** Replaces the tracking credential: the previous link stops working. */
+    public void rotateGuestToken(String newHash) {
+        this.guestTokenHash = newHash;
+        touch();
+    }
+
     public String getGuestTokenHash() {
         return guestTokenHash;
     }

@@ -1,6 +1,7 @@
 package com.pedidos360.orders.order.web;
 
 import com.pedidos360.orders.order.dto.CreateGuestOrderRequest;
+import com.pedidos360.orders.order.dto.GuestLinkRequest;
 import com.pedidos360.orders.order.dto.GuestOrderResponse;
 import com.pedidos360.orders.order.service.GuestOrderService;
 import jakarta.validation.Valid;
@@ -32,6 +33,13 @@ public class GuestOrderController {
     @PostMapping
     public ResponseEntity<GuestOrderResponse> create(@Valid @RequestBody CreateGuestOrderRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(guestOrderService.create(request));
+    }
+
+    /** Always 202: the response must not reveal whether the order exists. */
+    @PostMapping("/link-requests")
+    @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.ACCEPTED)
+    public void requestLink(@Valid @RequestBody GuestLinkRequest request) {
+        guestOrderService.requestLink(request);
     }
 
     @GetMapping("/{token}")

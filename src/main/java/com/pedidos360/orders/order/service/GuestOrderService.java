@@ -1,10 +1,13 @@
 package com.pedidos360.orders.order.service;
 
+import com.pedidos360.orders.notification.GuestVoucher;
+import com.pedidos360.orders.notification.GuestVoucherRequested;
 import com.pedidos360.orders.order.domain.Order;
 import com.pedidos360.orders.order.domain.OrderItem;
 import com.pedidos360.orders.order.domain.OrderStatus;
 import com.pedidos360.orders.order.domain.OrderTransitionPolicy;
 import com.pedidos360.orders.order.dto.CreateGuestOrderRequest;
+import com.pedidos360.orders.order.dto.GuestLinkRequest;
 import com.pedidos360.orders.order.dto.GuestOrderResponse;
 import com.pedidos360.orders.order.exception.GuestOrderNotFoundException;
 import com.pedidos360.orders.order.exception.OrderBusinessException;
@@ -14,13 +17,15 @@ import com.pedidos360.orders.outbox.OutboxWriter;
 import com.pedidos360.orders.outbox.RabbitConfiguration;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Orders bought without login. The secret tracking token is the only
  * credential: whoever holds it can view and cancel the order. The raw token is
- * returned once on creation and is never persisted, published or logged.
+ * returned once on creation, sent by email, and is never persisted, published
+ * or logged.
  */
 @Service
 public class GuestOrderService {
@@ -30,19 +35,25 @@ public class GuestOrderService {
     private final OrderTransitionPolicy transitionPolicy;
     private final OutboxWriter outboxWriter;
     private final GuestTrackingTokens tokens;
+    private final GuestTrackingLinks links;
+    private final ApplicationEventPublisher events;
 
     public GuestOrderService(
             OrderRepository orderRepository,
             OrderItemSnapshotter itemSnapshotter,
             OrderTransitionPolicy transitionPolicy,
             OutboxWriter outboxWriter,
-            GuestTrackingTokens tokens
+            GuestTrackingTokens tokens,
+            GuestTrackingLinks links,
+            ApplicationEventPublisher events
     ) {
         this.orderRepository = orderRepository;
         this.itemSnapshotter = itemSnapshotter;
         this.transitionPolicy = transitionPolicy;
         this.outboxWriter = outboxWriter;
         this.tokens = tokens;
+        this.links = links;
+        this.events = events;
     }
 
     @Transactional
@@ -51,7 +62,9 @@ public class GuestOrderService {
         String token = tokens.newToken();
         Order order = Order.createGuest(request.email(), tokens.hash(token), request.notes());
         order.replaceItems(items, request.notes());
-        return GuestOrderResponse.from(orderRepository.save(order), token);
+        Order saved = orderRepository.save(order);
+        requestVoucher(saved, token);
+        return GuestOrderResponse.from(saved, token);
     }
 
     @Transactional(readOnly = true)
@@ -77,6 +90,24 @@ public class GuestOrderService {
                 RabbitConfiguration.CANCELLED_ROUTING_KEY,
                 new OrderEventPayload.Cancelled(orderId));
         return GuestOrderResponse.from(order);
+    }
+
+    /**
+     * Always silent about existence: the caller gets the same answer whether the
+     * order matches or not. A match rotates the token, so the previous link dies.
+     */
+    @Transactional
+    public void requestLink(GuestLinkRequest request) {
+        orderRepository.findGuestByOrderNumberAndEmailForUpdate(request.orderNumber(), request.email())
+                .ifPresent(order -> {
+                    String token = tokens.newToken();
+                    order.rotateGuestToken(tokens.hash(token));
+                    requestVoucher(order, token);
+                });
+    }
+
+    private void requestVoucher(Order order, String token) {
+        events.publishEvent(new GuestVoucherRequested(GuestVoucher.from(order, links.linkFor(token))));
     }
 
     /** Malformed and unknown tokens end in the same 404. */

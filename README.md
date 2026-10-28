@@ -108,12 +108,22 @@ El cliente compra sin iniciar sesión y deja solo su correo. Estas rutas existen
   `id` interno, `customerId`, `stockReserved` ni el correo completo.
 - `POST /api/guest-orders/{token}/cancel`: cancela solo desde `CREADO` y escribe `pedido.cancelado` en la outbox;
   en otro estado responde `409`.
+- `POST /api/guest-orders/link-requests`: cuerpo `{"email", "orderNumber"}`. Responde siempre `202` sin cuerpo,
+  exista o no el pedido, para no revelar qué correos compraron. Si coinciden, rota el token (el enlace anterior deja
+  de funcionar) y reenvía el correo; si el cuerpo no es válido, `400`.
 
 El token son 256 bits de `SecureRandom` en 64 caracteres hexadecimales en minúscula. La base guarda solo su
 SHA-256 (`orders.guest_token_hash`, único); el token en claro no se guarda, no se publica en RabbitMQ y no se
 registra en los logs. Un token con formato inválido o desconocido responde el mismo `404`. El dueño de un pedido
 de invitado es `guest:<id del pedido>`, que nunca coincide con un `oid` o `sub`, por lo que ningún cliente con
 sesión puede verlo; el personal lo ve en su listado.
+
+El voucher y el enlace se envían por SMTP después del commit, en un executor acotado: si el correo falla, el pedido
+igual queda creado y la respuesta no cambia. Se configura solo por variables de entorno: `MAIL_HOST`, `MAIL_PORT`,
+`MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_AUTH`, `MAIL_STARTTLS` y `FRONTEND_PUBLIC_URL`. En local,
+`pedidos360-infra` levanta Mailpit (SMTP 1025, interfaz en `http://127.0.0.1:8025`); en AWS, las mismas variables
+apuntan al SMTP de Amazon SES. Sin `MAIL_HOST` el correo solo se registra en el log, sin enlace. La suite no abre
+conexiones SMTP.
 
 Para armar el pedido, orders consulta el producto en el catálogo (`GET /api/catalog/products/{id}`, ruta pública)
 sin `Authorization` cuando la request no trae JWT; si lo trae, lo reenvía como siempre.
