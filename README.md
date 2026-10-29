@@ -21,6 +21,11 @@ Los eventos de pedido se publican en RabbitMQ: `RABBITMQ_HOST`, `RABBITMQ_PORT`,
 `RABBITMQ_PASSWORD` y `RABBITMQ_VHOST` (por defecto `localhost:5672`, `guest`, vhost `/`). Sin broker la API responde,
 `/actuator/health` informa `DOWN` y los eventos esperan en la outbox. `mvn test` no necesita broker.
 
+Con el clúster de dos nodos de `pedidos360-infra`, el compose define además
+`SPRING_RABBITMQ_ADDRESSES=rabbitmq-1:5672,rabbitmq-2:5672`: tiene prioridad sobre `RABBITMQ_HOST`/`RABBITMQ_PORT` y, si
+un nodo cae, la conexión se reabre contra el otro. Las colas de este servicio son `classic` y viven en un solo nodo: si
+ese nodo cae, el consumo se detiene hasta que vuelve y los eventos esperan en la outbox.
+
 Variables locales:
 
 - `LOCAL_JWT_HMAC_SECRET`
