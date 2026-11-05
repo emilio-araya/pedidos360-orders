@@ -102,6 +102,35 @@ class OrderOutboxTest {
                 .satisfies(event -> assertThat(event.getEventType()).isEqualTo("pedido.cancelado"));
     }
 
+    /**
+     * Regresión S1: los eventos de Kafka no alteran la outbox de RabbitMQ. Crear,
+     * editar o avanzar el pedido no agrega filas aquí, y los cuerpos de
+     * aceptado/cancelado conservan su forma exacta.
+     */
+    @Test
+    void theRabbitOutboxKeepsOnlyAcceptedAndCancelledWithTheirOriginalPayloads() {
+        OrderResponse created = createOrder();
+        orderService.update(
+                created.id(),
+                new com.pedidos360.orders.order.dto.UpdateOrderRequest(
+                        List.of(new OrderItemRequest(PRODUCT_ID, 3)), null),
+                operator());
+        assertThat(outboxRepository.findAll()).isEmpty();
+
+        orderService.changeStatus(created.id(), OrderStatus.ACEPTADO, operator());
+        orderService.changeStatus(created.id(), OrderStatus.CANCELADO, operator());
+
+        List<OutboxEvent> events = outboxRepository.findAll().stream()
+                .sorted((left, right) -> left.getCreatedAt().compareTo(right.getCreatedAt()))
+                .toList();
+        assertThat(events).extracting(OutboxEvent::getEventType)
+                .containsExactly("pedido.aceptado", "pedido.cancelado");
+        assertThat(events.get(0).getPayload()).isEqualTo(
+                "{\"orderId\":\"" + created.id() + "\",\"items\":[{\"productId\":\""
+                        + PRODUCT_ID + "\",\"quantity\":3}]}");
+        assertThat(events.get(1).getPayload()).isEqualTo("{\"orderId\":\"" + created.id() + "\"}");
+    }
+
     private OrderResponse createOrder() {
         return orderService.create(
                 new CreateOrderRequest(List.of(new OrderItemRequest(PRODUCT_ID, 3)), null),

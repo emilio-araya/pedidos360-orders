@@ -1,5 +1,7 @@
 package com.pedidos360.orders.order.service;
 
+import com.pedidos360.orders.events.KafkaOutboxWriter;
+import com.pedidos360.orders.events.OrderEventType;
 import com.pedidos360.orders.notification.GuestVoucher;
 import com.pedidos360.orders.notification.GuestVoucherRequested;
 import com.pedidos360.orders.order.domain.Order;
@@ -34,6 +36,7 @@ public class GuestOrderService {
     private final OrderItemSnapshotter itemSnapshotter;
     private final OrderTransitionPolicy transitionPolicy;
     private final OutboxWriter outboxWriter;
+    private final KafkaOutboxWriter kafkaOutboxWriter;
     private final GuestTrackingTokens tokens;
     private final GuestTrackingLinks links;
     private final ApplicationEventPublisher events;
@@ -43,6 +46,7 @@ public class GuestOrderService {
             OrderItemSnapshotter itemSnapshotter,
             OrderTransitionPolicy transitionPolicy,
             OutboxWriter outboxWriter,
+            KafkaOutboxWriter kafkaOutboxWriter,
             GuestTrackingTokens tokens,
             GuestTrackingLinks links,
             ApplicationEventPublisher events
@@ -51,6 +55,7 @@ public class GuestOrderService {
         this.itemSnapshotter = itemSnapshotter;
         this.transitionPolicy = transitionPolicy;
         this.outboxWriter = outboxWriter;
+        this.kafkaOutboxWriter = kafkaOutboxWriter;
         this.tokens = tokens;
         this.links = links;
         this.events = events;
@@ -63,6 +68,7 @@ public class GuestOrderService {
         Order order = Order.createGuest(request.email(), tokens.hash(token), request.notes());
         order.replaceItems(items, request.notes());
         Order saved = orderRepository.save(order);
+        kafkaOutboxWriter.record(saved, null, OrderEventType.ORDER_CREATED);
         requestVoucher(saved, token);
         return GuestOrderResponse.from(saved, token);
     }
@@ -89,6 +95,7 @@ public class GuestOrderService {
                 orderId,
                 RabbitConfiguration.CANCELLED_ROUTING_KEY,
                 new OrderEventPayload.Cancelled(orderId));
+        kafkaOutboxWriter.record(order, OrderStatus.CREADO, OrderEventType.ORDER_CANCELLED);
         return GuestOrderResponse.from(order);
     }
 

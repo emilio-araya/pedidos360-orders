@@ -20,6 +20,8 @@ Oracle/cloud.
 Los eventos de pedido se publican en RabbitMQ: `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME`,
 `RABBITMQ_PASSWORD` y `RABBITMQ_VHOST` (por defecto `localhost:5672`, `guest`, vhost `/`). Sin broker la API responde,
 `/actuator/health` informa `DOWN` y los eventos esperan en la outbox. `mvn test` no necesita broker.
+Los eventos de dominio se publican además en Kafka (`SPRING_KAFKA_BOOTSTRAP_SERVERS`, por defecto `localhost:9092`); ver
+*Eventos de dominio en Kafka*.
 
 Con el clúster de dos nodos de `pedidos360-infra`, el compose define además
 `SPRING_RABBITMQ_ADDRESSES=rabbitmq-1:5672,rabbitmq-2:5672`: tiene prioridad sobre `RABBITMQ_HOST`/`RABBITMQ_PORT` y, si
@@ -148,6 +150,34 @@ responde con `stock.reservado` o `stock.reserva-fallida`.
 
 El contrato de eventos, los reintentos con backoff y la DLQ están en
 `pedidos360-infra/docs/MENSAJERIA_RABBITMQ.md`.
+
+### Eventos de dominio en Kafka
+
+Kafka convive con RabbitMQ: RabbitMQ sigue llevando los comandos de reserva de stock (sin cambios) y Kafka publica los
+eventos de dominio del pedido en el topic `pedidos360.order-events`, que el catálogo consume para su proyección de
+ventas por producto.
+
+- Cada cambio de estado escribe una fila en `kafka_outbox_event` (migración `V5`) en la misma transacción: creación
+  (`ORDER_CREATED`, también de invitados), edición (`ORDER_UPDATED`) y cada transición (`ORDER_ACCEPTED`,
+  `ORDER_IN_PREPARATION`, `ORDER_DISPATCHED`, `ORDER_DELIVERED`, `ORDER_CANCELLED`, incluida la cancelación por
+  rechazo de stock). Confirmar la reserva no cambia el estado y no emite evento.
+- `KafkaOutboxPublisher` publica los pendientes por `created_at`, espera la confirmación del broker antes de marcarlos
+  publicados y corta el lote ante el primer fallo. El productor usa `acks=all` e idempotencia; la clave del registro es
+  el `orderId` (orden garantizado por pedido) y el valor es el JSON ya guardado en la outbox.
+- Valor JSON (`schemaVersion` 1): `eventId`, `eventType`, `schemaVersion`, `orderId`, `status`, `previousStatus`
+  (`null` sólo en `ORDER_CREATED`), `items` (`productId`, `quantity`) y `occurredAt` (ISO-8601 UTC).
+- Garantía at-least-once: un reenvío lleva el mismo `eventId` y el consumidor lo descarta.
+
+Configuración:
+
+- `SPRING_KAFKA_BOOTSTRAP_SERVERS` (`spring.kafka.bootstrap-servers`, por defecto `localhost:9092`)
+- `KAFKA_OUTBOX_PUBLISHER_ENABLED` (`app.kafka.outbox.publisher-enabled`, por defecto `true`; los tests lo desactivan)
+- `KAFKA_OUTBOX_PUBLISHER_DELAY_MS` (por defecto `2000`) y `KAFKA_OUTBOX_SEND_TIMEOUT_MS` (por defecto `10000`)
+- `KAFKA_PRODUCER_MAX_BLOCK_MS` (por defecto `10000`): tope de espera de `send()` cuando no hay broker
+
+Sin broker la API responde y los eventos esperan en `kafka_outbox_event`. `mvn test` no necesita Kafka. El servicio no
+crea el topic: lo crea `pedidos360-infra` (3 particiones). El contrato y cómo verificarlo están en
+`pedidos360-infra/docs/MENSAJERIA_KAFKA.md`.
 
 ## Pruebas y contenedor
 

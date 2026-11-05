@@ -1,5 +1,7 @@
 package com.pedidos360.orders.order.service;
 
+import com.pedidos360.orders.events.KafkaOutboxWriter;
+import com.pedidos360.orders.events.OrderEventType;
 import com.pedidos360.orders.order.domain.Order;
 import com.pedidos360.orders.order.domain.OrderItem;
 import com.pedidos360.orders.order.domain.OrderStatus;
@@ -39,19 +41,22 @@ public class OrderService {
     private final OrderTransitionPolicy transitionPolicy;
     private final OrderAuthorizationService authorizationService;
     private final OutboxWriter outboxWriter;
+    private final KafkaOutboxWriter kafkaOutboxWriter;
 
     public OrderService(
             OrderRepository orderRepository,
             OrderItemSnapshotter itemSnapshotter,
             OrderTransitionPolicy transitionPolicy,
             OrderAuthorizationService authorizationService,
-            OutboxWriter outboxWriter
+            OutboxWriter outboxWriter,
+            KafkaOutboxWriter kafkaOutboxWriter
     ) {
         this.orderRepository = orderRepository;
         this.itemSnapshotter = itemSnapshotter;
         this.transitionPolicy = transitionPolicy;
         this.authorizationService = authorizationService;
         this.outboxWriter = outboxWriter;
+        this.kafkaOutboxWriter = kafkaOutboxWriter;
     }
 
     @Transactional(readOnly = true)
@@ -93,7 +98,9 @@ public class OrderService {
         List<OrderItem> items = itemSnapshotter.snapshot(request.items());
         Order order = Order.create(customerId, request.notes());
         order.replaceItems(items, request.notes());
-        return OrderResponse.from(orderRepository.save(order));
+        Order saved = orderRepository.save(order);
+        kafkaOutboxWriter.record(saved, null, OrderEventType.ORDER_CREATED);
+        return OrderResponse.from(saved);
     }
 
     @Transactional
@@ -109,6 +116,7 @@ public class OrderService {
         }
         List<OrderItem> replacement = itemSnapshotter.snapshot(request.items());
         order.replaceItems(replacement, request.notes());
+        kafkaOutboxWriter.record(order, OrderStatus.CREADO, OrderEventType.ORDER_UPDATED);
         return OrderResponse.from(order);
     }
 
@@ -116,9 +124,11 @@ public class OrderService {
     public OrderResponse delete(String id, Authentication authentication) {
         Order order = findForUpdate(id);
         authorizationService.requireDeleteCancellation(order, authentication);
-        transitionPolicy.requireTransition(order.getStatus(), OrderStatus.CANCELADO);
+        OrderStatus previous = order.getStatus();
+        transitionPolicy.requireTransition(previous, OrderStatus.CANCELADO);
         order.markCancelled();
         recordCancelledEvent(order);
+        recordTransition(order, previous);
         return OrderResponse.from(order);
     }
 
@@ -130,7 +140,8 @@ public class OrderService {
     ) {
         Order order = findForUpdate(id);
         authorizationService.requireStatusChange(order, target, authentication);
-        transitionPolicy.requireTransition(order.getStatus(), target);
+        OrderStatus previous = order.getStatus();
+        transitionPolicy.requireTransition(previous, target);
 
         if (target == OrderStatus.ACEPTADO) {
             order.markAccepted();
@@ -146,6 +157,7 @@ public class OrderService {
             }
             order.changeStatus(target);
         }
+        recordTransition(order, previous);
         return OrderResponse.from(order);
     }
 
@@ -185,6 +197,12 @@ public class OrderService {
         }
         order.cancelForRejectedStock(reason != null ? reason : errorCode);
         recordCancelledEvent(order);
+        recordTransition(order, OrderStatus.ACEPTADO);
+    }
+
+    /** Evento de dominio para Kafka; convive con los comandos de RabbitMQ (S1). */
+    private void recordTransition(Order order, OrderStatus previous) {
+        kafkaOutboxWriter.record(order, previous, OrderEventType.forTransitionTo(order.getStatus()));
     }
 
     private void recordAcceptedEvent(Order order) {
