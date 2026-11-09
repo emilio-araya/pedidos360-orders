@@ -30,6 +30,20 @@ spring:
         acknowledge-mode: manual
         prefetch: 10
         default-requeue-rejected: false
+  kafka:
+    # Eventos de dominio del pedido (topic pedidos360.order-events). RabbitMQ
+    # sigue llevando los comandos de reserva de stock.
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # El payload ya es JSON en la outbox: se envía como String, sin re-serializar.
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # El publicador espera la confirmación de todas las réplicas en sincronía.
+      acks: all
+      properties:
+        enable.idempotence: true
+        # Sin broker, send() no bloquea el ciclo del publicador más de esto.
+        max.block.ms: ${KAFKA_PRODUCER_MAX_BLOCK_MS:10000}
   mail:
     # Mailpit en local y Amazon SES en AWS: mismas variables, distinto host.
     host: ${MAIL_HOST:}
@@ -98,6 +112,12 @@ app:
     publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
     publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:2000}
     confirm-timeout-ms: ${OUTBOX_CONFIRM_TIMEOUT_MS:5000}
+  kafka:
+    outbox:
+      # Los tests lo desactivan en src/test/resources/application.properties.
+      publisher-enabled: ${KAFKA_OUTBOX_PUBLISHER_ENABLED:true}
+      publisher-delay-ms: ${KAFKA_OUTBOX_PUBLISHER_DELAY_MS:2000}
+      send-timeout-ms: ${KAFKA_OUTBOX_SEND_TIMEOUT_MS:10000}
 
 logging:
   level:
