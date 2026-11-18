@@ -33,7 +33,7 @@ import org.springframework.stereotype.Component;
 )
 public class KafkaOutboxPublisher {
 
-    public static final String ORDER_EVENTS_TOPIC = "pedidos360.order-events";
+    public static final String ORDER_EVENTS_TOPIC = KafkaTopics.ORDER_EVENTS;
 
     private static final Logger log = LoggerFactory.getLogger(KafkaOutboxPublisher.class);
 
@@ -70,7 +70,8 @@ public class KafkaOutboxPublisher {
 
     /** El payload ya es JSON: viaja tal cual como valor String. */
     private void publish(KafkaOutboxEvent event) {
-        awaitAck(kafkaTemplate.send(ORDER_EVENTS_TOPIC, event.getAggregateId(), event.getPayload()));
+        String topic = event.getTargetTopic() != null ? event.getTargetTopic() : KafkaTopics.ORDER_EVENTS;
+        awaitAck(kafkaTemplate.send(topic, event.getAggregateId(), event.getPayload()));
         event.markPublished(Instant.now());
         repository.save(event);
     }

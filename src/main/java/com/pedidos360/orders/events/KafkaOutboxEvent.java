@@ -29,6 +29,11 @@ public class KafkaOutboxEvent {
     @Column(name = "event_type", nullable = false, updatable = false, length = 60)
     private String eventType;
 
+    // Tópico destino del evento. V6 lo añadió: por defecto el tópico de
+    // dominio; los eventos de notificación van a `pedidos360.notification-events`.
+    @Column(name = "target_topic", nullable = false, updatable = false, length = 249)
+    private String targetTopic;
+
     @Lob
     @Column(name = "payload", nullable = false, updatable = false)
     private String payload;
@@ -46,12 +51,18 @@ public class KafkaOutboxEvent {
     }
 
     public KafkaOutboxEvent(UUID eventId, UUID aggregateId, String eventType, String payload, Instant createdAt) {
+        this(eventId, aggregateId, eventType, payload, createdAt, KafkaTopics.ORDER_EVENTS);
+    }
+
+    public KafkaOutboxEvent(UUID eventId, UUID aggregateId, String eventType, String payload, Instant createdAt,
+            String targetTopic) {
         this.id = eventId.toString();
         this.aggregateId = aggregateId.toString();
         this.eventType = eventType;
         this.payload = payload;
         this.createdAt = createdAt;
         this.attempts = 0;
+        this.targetTopic = targetTopic;
     }
 
     public void markPublished(Instant when) {
@@ -76,6 +87,10 @@ public class KafkaOutboxEvent {
 
     public String getPayload() {
         return payload;
+    }
+
+    public String getTargetTopic() {
+        return targetTopic;
     }
 
     public Instant getCreatedAt() {

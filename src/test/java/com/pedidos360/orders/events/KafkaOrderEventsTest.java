@@ -177,8 +177,11 @@ class KafkaOrderEventsTest {
 
         guestOrderService.cancel(created.trackingToken());
 
+        // La cancelación de un invitado encola además NOTIFICATION_REQUESTED:
+        // un invitado no ve la app y hay que avisarle por correo.
         List<KafkaOutboxEvent> events = eventsOf(orderId);
-        assertThat(events).hasSize(2);
+        assertThat(events).extracting(KafkaOutboxEvent::getEventType)
+                .containsExactly("ORDER_CREATED", "ORDER_CANCELLED", "NOTIFICATION_REQUESTED");
         assertEvent(events.get(0), orderId, "ORDER_CREATED", "CREADO", null);
         assertEvent(events.get(1), orderId, "ORDER_CANCELLED", "CANCELADO", "CREADO");
         assertItems(events.get(1), PRODUCT_ID, 2);

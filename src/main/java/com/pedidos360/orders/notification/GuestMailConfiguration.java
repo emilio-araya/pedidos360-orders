@@ -39,6 +39,21 @@ public class GuestMailConfiguration {
      * deterministic without waiting on threads.
      */
     @Bean
+    OrderStatusMailer orderStatusMailer(
+            Environment environment,
+            ObjectProvider<JavaMailSender> mailSender,
+            @Value("${app.guest.mail.from}") String from,
+            @Value("${app.guest.mail.frontend-public-url}") String frontendBaseUrl
+    ) {
+        String host = environment.getProperty("spring.mail.host", "");
+        JavaMailSender sender = mailSender.getIfAvailable();
+        if (host.isBlank() || sender == null) {
+            return new LoggingOrderStatusMailer();
+        }
+        return new SmtpOrderStatusMailer(sender, from, frontendBaseUrl);
+    }
+
+    @Bean
     Executor guestVoucherExecutor(@Value("${app.guest.mail.executor-threads}") int threads) {
         if (threads <= 0) {
             return new SyncTaskExecutor();

@@ -118,6 +118,9 @@ app:
       publisher-enabled: ${KAFKA_OUTBOX_PUBLISHER_ENABLED:true}
       publisher-delay-ms: ${KAFKA_OUTBOX_PUBLISHER_DELAY_MS:2000}
       send-timeout-ms: ${KAFKA_OUTBOX_SEND_TIMEOUT_MS:10000}
+    notifications:
+      # Consumidor de `pedidos360.notification-events` (grupo propio).
+      enabled: ${KAFKA_NOTIFICATIONS_ENABLED:true}
 
 logging:
   level:

@@ -48,16 +48,39 @@ public class KafkaOutboxWriter {
                 previousStatus,
                 items,
                 now.toString());
-        return repository.save(new KafkaOutboxEvent(eventId, orderId, eventType.name(), toJson(event), now));
+        KafkaOutboxEvent domainEvent = repository.save(new KafkaOutboxEvent(
+                eventId, orderId, eventType.name(), toJson(event), now));
+        // Un invitado no ve la app: hay que avisarle cada cambio por correo.
+        // Sólo transiciones (previousStatus != null): el pedido recién creado
+        // ya se lo informó el correo de voucher. Se encola en la MISMA
+        // transacción, así que si el cambio de estado hace rollback, el aviso
+        // desaparece con él.
+        if (previousStatus != null && order.getCustomerEmail() != null) {
+            enqueueNotification(order, orderId, previousStatus, now);
+        }
+        return domainEvent;
     }
 
-    private String toJson(OrderDomainEvent event) {
+    private void enqueueNotification(Order order, UUID orderId, OrderStatus previousStatus, Instant now) {
+        UUID notificationId = UUID.randomUUID();
+        NotificationRequested notification = new NotificationRequested(
+                notificationId,
+                orderId,
+                order.getOrderNumber(),
+                order.getStatus().name(),
+                previousStatus.name(),
+                order.getCustomerEmail(),
+                now.toString());
+        repository.save(new KafkaOutboxEvent(notificationId, orderId, "NOTIFICATION_REQUESTED",
+                toJson(notification), now, KafkaTopics.NOTIFICATION_EVENTS));
+    }
+
+    private String toJson(Object event) {
         try {
             return objectMapper.writeValueAsString(event);
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException(
-                    "No se pudo serializar el evento " + event.eventType() + " del pedido " + event.orderId(),
-                    exception);
+                    "No se pudo serializar un evento de la outbox: " + event, exception);
         }
     }
 }
