@@ -5,6 +5,7 @@ public final class KafkaTopics {
 
     public static final String ORDER_EVENTS = "pedidos360.order-events";
     public static final String NOTIFICATION_EVENTS = "pedidos360.notification-events";
+    public static final String NOTIFICATION_EVENTS_DLT = NOTIFICATION_EVENTS + ".DLT";
 
     private KafkaTopics() {
     }

@@ -1,32 +1,46 @@
 package com.pedidos360.orders.notification;
 
+import com.pedidos360.orders.events.KafkaTopics;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.kafka.listener.CommonErrorHandler;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.util.backoff.FixedBackOff;
 
 /**
- * Notificaciones: no merecen una DLT propia (un correo perdido no bloquea el
- * dominio), pero merecen tolerancia a fallos transitorios de SMTP. Se reintenta
- * dos veces cada 2 s; agotados, el registro se descarta y queda el error en el
- * log (el evento original sigue en la outbox como publicado).
+ * Manejo de errores del consumidor de notificaciones. Spring Boot aplica este
+ * {@link DefaultErrorHandler} a la fábrica de contenedores por defecto:
+ * dos reintentos cada 2 s por errores transitorios de SMTP; agotados, el
+ * mensaje va a `pedidos360.notification-events.DLT` junto con sus headers
+ * ({@code originalTopic}, {@code originalPartition}, {@code originalOffset},
+ * {@code exceptionMessage}). El payload inválido también termina en la DLT en
+ * lugar de descartarse en silencio.
+ *
+ * La fila de `notification_delivery` queda en FAILED junto con el error de
+ * cada intento; la DLT sirve para inspección y reproceso manual.
  */
-@Configuration
+@Configuration(proxyBeanMethods = false)
 public class NotificationKafkaConfiguration {
 
-    private static final Logger log = LoggerFactory.getLogger(NotificationKafkaConfiguration.class);
+    static final TopicPartition DEAD_LETTER_PARTITION = new TopicPartition(
+            KafkaTopics.NOTIFICATION_EVENTS_DLT, -1);
 
     @Bean
-    CommonErrorHandler notificationErrorHandler() {
+    DefaultErrorHandler notificationErrorHandler(KafkaTemplate<String, String> kafkaTemplate) {
         FixedBackOff backOff = new FixedBackOff(2000L, 2L);
-        return new DefaultErrorHandler(
-                (ConsumerRecord<?, ?> record, Exception exception) -> log.error(
-                        "Notificación descartada tras reintentos (tópico {}, partición {}, offset {}): {}",
-                        record.topic(), record.partition(), record.offset(), exception.getMessage()),
-                backOff);
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
+                kafkaTemplate, NotificationKafkaConfiguration::deadLetterDestination);
+        return new DefaultErrorHandler(recoverer, backOff);
+    }
+
+    /**
+     * Partición negativa: la clave del registro (`orderId`) elige la partición,
+     * igual que en el resto del dominio.
+     */
+    static TopicPartition deadLetterDestination(ConsumerRecord<?, ?> record, Exception exception) {
+        return DEAD_LETTER_PARTITION;
     }
 }
