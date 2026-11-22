@@ -30,10 +30,9 @@ ese nodo cae, el consumo se detiene hasta que vuelve y los eventos esperan en la
 
 Variables locales:
 
-- `LOCAL_JWT_HMAC_SECRET`
+- `LOCAL_JWT_HMAC_SECRET` (al menos 32 bytes; debe coincidir con BFF y catálogo)
 - `LOCAL_JWT_ISSUER` (predeterminado `https://login.microsoftonline.com/pedidos360-local/v2.0`)
 - `LOCAL_JWT_AUDIENCE` (predeterminado `api://150f51db-4084-4979-b1a1-e6a6e7893a01`)
-- `LOCAL_JWT_HMAC_SECRET` (debe coincidir con BFF y catálogo)
 - `CATALOG_SERVICE_URL` (por defecto `http://localhost:8082`)
 - `CATALOG_CONNECT_TIMEOUT_MS` y `CATALOG_READ_TIMEOUT_MS` (ver *Timeouts hacia el catálogo*)
 
@@ -157,7 +156,8 @@ Kafka convive con RabbitMQ: RabbitMQ sigue llevando los comandos de reserva de s
 eventos de dominio del pedido en el topic `pedidos360.order-events`, que el catálogo consume para su proyección de
 ventas por producto.
 
-- Cada cambio de estado escribe una fila en `kafka_outbox_event` (migración `V5`) en la misma transacción: creación
+- Cada cambio de estado escribe una fila en `kafka_outbox_event` (migración `V5`; `V6` agrega el tópico destino y
+  `V7` la tabla de entregas de notificación) en la misma transacción: creación
   (`ORDER_CREATED`, también de invitados), edición (`ORDER_UPDATED`) y cada transición (`ORDER_ACCEPTED`,
   `ORDER_IN_PREPARATION`, `ORDER_DISPATCHED`, `ORDER_DELIVERED`, `ORDER_CANCELLED`, incluida la cancelación por
   rechazo de stock). Confirmar la reserva no cambia el estado y no emite evento.
@@ -176,8 +176,26 @@ Configuración:
 - `KAFKA_PRODUCER_MAX_BLOCK_MS` (por defecto `10000`): tope de espera de `send()` cuando no hay broker
 
 Sin broker la API responde y los eventos esperan en `kafka_outbox_event`. `mvn test` no necesita Kafka. El servicio no
-crea el topic: lo crea `pedidos360-infra` (3 particiones). El contrato y cómo verificarlo están en
+crea los topics ni sus `.DLT`: los crea `pedidos360-infra` con 3 particiones. El contrato y cómo verificarlo están en
 `pedidos360-infra/docs/MENSAJERIA_KAFKA.md`.
+
+### Notificaciones a invitados (`notification-events`)
+
+Cada transición de estado de un pedido de invitado (la creación no, porque el voucher ya la cubre) escribe
+`NOTIFICATION_REQUESTED` en `pedidos360.notification-events` con la misma outbox transaccional y la misma clave
+(`orderId`). `NotificationListener` lo consume con el grupo propio `pedidos360-notifications` y envía el correo por
+SMTP.
+
+- **Idempotencia:** la tabla `notification_delivery` (migración `V7`) usa el `eventId` de la outbox como clave. Una
+  fila `SENT` nunca se reenvía; una `PROCESSING` con menos de 10 minutos se omite porque otro consumidor la está
+  atendiendo; `FAILED` o `PROCESSING` huérfana se reintenta.
+- **Errores:** un payload inválido o un envío fallido se reintentan 2 veces cada 2 s y, agotados, van a
+  `pedidos360.notification-events.DLT` con los headers originales (`kafka_dlt-original-*`). La reentrega no bloquea
+  la partición.
+- **Límites conocidos:** SMTP no es exactly-once. Entre que el servidor acepta el correo y se persiste `SENT` hay una
+  ventana de duplicado; y si el proceso muere después de reclamar la entrega y antes de enviar, la reentrega se omite
+  y el correo no sale. Son el costo de no mantener la transacción abierta durante el envío.
+- El consumidor se apaga con `app.kafka.notifications.enabled=false` (la suite lo hace para no necesitar broker).
 
 ## Pruebas y contenedor
 
@@ -190,8 +208,8 @@ Las pruebas usan H2 aislado y un mock de `CatalogClient`; no requieren Docker ni
 
 | Métrica | Valor |
 |---|---|
-| Pruebas | 49 |
-| Cobertura de líneas | 83.5% |
-| Cobertura de instrucciones | 82.1% |
+| Pruebas | 134 |
+| Cobertura de líneas | 87.92% |
+| Cobertura de instrucciones | 86.92% |
 
 La CI ejecuta `mvn verify` en cada push y pull request, muestra el resumen en la página del workflow y adjunta el informe HTML de JaCoCo como artefacto. La cobertura de instrucciones es un umbral: el build falla si baja del 70%.
