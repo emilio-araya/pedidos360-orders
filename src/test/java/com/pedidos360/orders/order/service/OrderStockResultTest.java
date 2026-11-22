@@ -20,6 +20,11 @@ import com.pedidos360.orders.outbox.OutboxEventRepository;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -139,6 +144,59 @@ class OrderStockResultTest {
         assertThat(reloaded.stockReserved()).isFalse();
         assertThat(eventTypes(accepted.id()))
                 .containsExactly("pedido.aceptado", "pedido.cancelado", "pedido.reserva-huerfana");
+    }
+
+
+    @Test
+    void concurrentCancellationAndStockConfirmationNeverLeaveReservationOnCancelledOrder() throws Exception {
+        OrderResponse accepted = accept(createOrder());
+        UUID orderId = UUID.fromString(accepted.id());
+        Authentication operator = operator();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            Future<?> cancellation = executor.submit(() -> {
+                ready.countDown();
+                awaitStart(start);
+                orderService.changeStatus(accepted.id(), OrderStatus.CANCELADO, operator);
+            });
+            Future<?> confirmation = executor.submit(() -> {
+                ready.countDown();
+                awaitStart(start);
+                orderService.applyStockReserved(orderId);
+            });
+
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            cancellation.get(10, TimeUnit.SECONDS);
+            confirmation.get(10, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        OrderResponse reloaded = orderService.get(accepted.id(), operator);
+        List<String> events = eventTypes(accepted.id());
+
+        // Gane quien gane la carrera, cancelar debe ser el estado final y el
+        // catálogo debe recibir una orden de liberación, sin duplicar cancelaciones.
+        assertThat(reloaded.status()).isEqualTo(OrderStatus.CANCELADO);
+        assertThat(reloaded.stockReserved()).isFalse();
+        assertThat(events).contains("pedido.aceptado", "pedido.cancelado");
+        assertThat(events.stream().filter("pedido.cancelado"::equals)).hasSize(1);
+        assertThat(events.stream().filter("pedido.reserva-huerfana"::equals)).hasSizeLessThanOrEqualTo(1);
+    }
+
+    private void awaitStart(CountDownLatch start) {
+        try {
+            if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timeout esperando el inicio de la operación concurrente");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Operación concurrente interrumpida", exception);
+        }
     }
 
     @Test
